@@ -20,7 +20,7 @@ export function ChatSidebar({ onNewChat }: ChatSidebarProps) {
     <Sidebar className="border-r border-border">
       <SidebarHeader className="border-b border-border p-4">
         {/* Logo container - replace with custom image when uploaded */}
-        <span className="text-lg font-normal tracking-[0.08em] text-foreground" style={{ fontFamily: 'Georgia, "Times New Roman", Times, serif' }}>alize</span>
+        <span className="text-lg font-normal tracking-[0.08em] text-foreground" style={{ fontFamily: 'Georgia, "Times New Roman", Times, serif' }}>Alizé</span>
         <Button
           onClick={onNewChat}
           variant="outline"

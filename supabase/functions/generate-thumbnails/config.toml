@@ -1,0 +1,2 @@
+[functions.generate-thumbnails]
+verify_jwt = false

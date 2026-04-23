@@ -1,4 +1,4 @@
-// Central state store for Alize Startup OS
+// Central state store for Alizé Startup OS
 
 export interface StartupIdea {
   name: string;

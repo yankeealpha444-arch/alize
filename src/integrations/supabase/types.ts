@@ -144,20 +144,29 @@ export type Database = {
         Row: {
           created_at: string | null
           id: string
+          idea: string
+          is_anonymous_draft: boolean
           name: string
           status: string
+          user_id: string | null
         }
         Insert: {
           created_at?: string | null
           id?: string
+          idea?: string
+          is_anonymous_draft?: boolean
           name?: string
           status?: string
+          user_id?: string | null
         }
         Update: {
           created_at?: string | null
           id?: string
+          idea?: string
+          is_anonymous_draft?: boolean
           name?: string
           status?: string
+          user_id?: string | null
         }
         Relationships: []
       }

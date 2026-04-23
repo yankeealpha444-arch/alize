@@ -15,7 +15,7 @@ function getActionRoute(action: string, projectId: string): string {
   if (lower.includes("landing") || lower.includes("headline") || lower.includes("hero")) return `/builder/${projectId}`;
   if (lower.includes("user") || lower.includes("traffic") || lower.includes("first")) return `/get-users/${projectId}`;
   if (lower.includes("validation") || lower.includes("survey")) return `/get-users/${projectId}`;
-  if (lower.includes("crushing")) return `/dashboard/${projectId}`;
+  if (lower.includes("crushing")) return `/founder/${projectId}`;
   return `/preview/${projectId}`;
 }
 

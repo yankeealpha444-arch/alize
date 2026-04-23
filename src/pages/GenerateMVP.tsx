@@ -1,90 +1,75 @@
-import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { Check } from "lucide-react";
-import { Progress } from "@/components/ui/progress";
-
-const STEPS = [
-  "Analyzing your idea…",
-  "Writing copy…",
-  "Designing layout…",
-  "Preparing public page…",
-  "Setting up tracking…",
-  "Preparing dashboard…",
-  "Creating share link…",
-];
-
-const STEP_DURATION = 800;
+import { useEffect, useRef, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
+import { fetchClipperState, processQueuedVideoJob } from "@/lib/mvp/videoClipperBackend";
+import { trackEvent } from "@/lib/trackingEvents";
 
 export default function GenerateMVP() {
+  const { projectId: routeProjectId } = useParams<{ projectId?: string }>();
+  const projectId = routeProjectId || localStorage.getItem("alize_projectId") || "default";
+  const jobId = localStorage.getItem(`alize_video_job_id_${projectId}`);
   const navigate = useNavigate();
-  const [currentStep, setCurrentStep] = useState(0);
-
-  const projectMode = localStorage.getItem("alize_projectMode") || "validation";
-  const isSaas = projectMode === "growth";
-  const typeLabel = isSaas ? "SaaS Product MVP" : "Landing Page MVP";
+  const [status, setStatus] = useState<"queued" | "processing" | "completed" | "failed" | "missing">("queued");
+  const [jobErrorMessage, setJobErrorMessage] = useState<string | null>(null);
+  const trackedStarted = useRef(false);
+  const trackedCompleted = useRef(false);
 
   useEffect(() => {
-    if (currentStep < STEPS.length) {
-      const t = setTimeout(() => setCurrentStep((s) => s + 1), STEP_DURATION);
-      return () => clearTimeout(t);
-    } else {
-      const pid = localStorage.getItem("alize_projectId") || "default";
-      const t = setTimeout(() => {
-        navigate(`/dashboard/${pid}`, { replace: true });
-      }, 600);
-      return () => clearTimeout(t);
+    if (!jobId) {
+      setStatus("missing");
+      return;
     }
-  }, [currentStep, navigate]);
+    if (!trackedStarted.current) {
+      trackedStarted.current = true;
+      void trackEvent("processing_started", projectId, "video_job", { job_id: jobId });
+    }
 
-  const progressPercent = Math.round((currentStep / STEPS.length) * 100);
+    let alive = true;
+    const poll = async () => {
+      try {
+        await processQueuedVideoJob(jobId);
+        const s = await fetchClipperState(projectId, jobId);
+        if (!alive) return;
+        const next = s.latestJob?.status ?? "missing";
+        setStatus(next === "queued" || next === "processing" || next === "completed" || next === "failed" ? next : "missing");
+        setJobErrorMessage(s.latestJob?.error_message ?? null);
+        if (s.clips.length > 0 || next === "completed") {
+          if (!trackedCompleted.current) {
+            trackedCompleted.current = true;
+            void trackEvent("clips_generated", projectId, "video_job", { job_id: jobId, clip_count: s.clips.length });
+          }
+          navigate(`/p/${projectId}`, { replace: true });
+        }
+      } catch {
+        if (alive) setStatus("failed");
+      }
+    };
+    void poll();
+    const timer = window.setInterval(() => void poll(), 2200);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, [projectId, jobId, navigate]);
 
   return (
-    <div className="max-w-lg mx-auto pt-8 pb-16 px-4">
-      {/* Back button */}
-      <button
-        onClick={() => navigate("/questions")}
-        className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground mb-6 transition-colors"
-      >
-        ← Back
-      </button>
-
-      <h1 className="text-2xl font-medium text-foreground mb-2">
-        Generating {typeLabel}
-      </h1>
-      <p className="text-sm text-muted-foreground mb-10">
-        We're building your {isSaas ? "SaaS product" : "landing page"} and setting up your test.
+    <div className="max-w-3xl mx-auto pt-8 pb-16 px-4">
+      <h1 className="text-2xl font-medium text-foreground mb-2 text-center">Analyzing your video...</h1>
+      <p className="text-sm text-muted-foreground text-center">
+        Finding the best moments for short-form clips
       </p>
-
-      <Progress value={progressPercent} className="h-2 mb-8" />
-
-      <div className="space-y-3">
-        {STEPS.map((label, i) => {
-          const done = i < currentStep;
-          const active = i === currentStep;
-          return (
-            <div
-              key={i}
-              className={`flex items-center gap-3 text-sm transition-all duration-300 ${
-                done ? "text-foreground" : active ? "text-foreground font-medium" : "text-muted-foreground/40"
-              }`}
-            >
-              {done ? (
-                <Check className="h-4 w-4 text-foreground shrink-0" />
-              ) : active ? (
-                <div className="w-4 h-4 border-2 border-foreground/30 border-t-foreground rounded-full animate-spin shrink-0" />
-              ) : (
-                <div className="w-4 h-4 rounded-full border border-border shrink-0" />
-              )}
-              {label}
-            </div>
-          );
-        })}
-      </div>
-
-      {currentStep >= STEPS.length && (
-        <p className="text-sm text-foreground font-medium mt-8">
-          ✓ Your MVP is ready!
+      <div className="mt-8 rounded-xl border border-border bg-card p-6 text-center">
+        <p className="text-sm text-foreground">
+          {status === "queued" && "Analyzing your video..."}
+          {status === "processing" && "Finding best moments..."}
+          {status === "completed" && "Your clips are ready. Opening them now..."}
+          {status === "failed" &&
+            (jobErrorMessage?.trim() || "Something went wrong. Try another link.")}
+          {status === "missing" && "Could not find this job. Paste a new link to start again."}
         </p>
+        <p className="text-xs text-muted-foreground mt-2">Job: {jobId ?? "missing"}</p>
+      </div>
+      {(status === "failed" || status === "missing") && (
+        <p className="mt-4 text-xs text-center text-muted-foreground">Go back and try another link.</p>
       )}
     </div>
   );

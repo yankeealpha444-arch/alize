@@ -1,12 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { HashRouter, Navigate, Route, Routes } from "react-router-dom";
+import { HashRouter, Navigate, Route, Routes, useParams } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { FounderAuthProvider } from "@/context/FounderAuthContext";
+import FounderGate from "@/components/FounderGate";
 import AppLayout from "@/components/AppLayout";
-import Idea from "@/pages/Idea";
-import Questions from "@/pages/Questions";
-import GenerateMVP from "@/pages/GenerateMVP";
 import Builder from "@/pages/Builder";
 import Publish from "@/pages/Publish";
 import Dashboard from "@/pages/Dashboard";
@@ -15,74 +14,110 @@ import PreviewChanges from "@/pages/PreviewChanges";
 import Versions from "@/pages/Versions";
 import GetUsers from "@/pages/GetUsers";
 import PublicMVP from "@/pages/PublicMVP";
+import GrowthToolApp from "@/pages/GrowthToolApp";
 import Projects from "@/pages/Projects";
 import NotFound from "@/pages/NotFound";
+import InternalMetrics from "@/pages/InternalMetrics";
 import FeedbackDetail from "@/pages/detail/FeedbackDetail";
 import SurveyDetail from "@/pages/detail/SurveyDetail";
 import PriceIntentDetail from "@/pages/detail/PriceIntentDetail";
 import EmailsDetail from "@/pages/detail/EmailsDetail";
 import DropOffDetail from "@/pages/detail/DropOffDetail";
 import UsageDetail from "@/pages/detail/UsageDetail";
+import ClipResults from "@/pages/ClipResults";
+import Guidance from "@/pages/Guidance";
+import ClipSelectionPage from "@/pages/ClipSelectionPage";
+import ThumbnailSelectionPage from "@/pages/ThumbnailSelectionPage";
+import PreviewPage from "@/pages/PreviewPage";
+import VideoMVP from "@/pages/VideoMVP";
+import DashboardPage from "@/pages/DashboardPage";
+import FounderLogin from "@/pages/FounderLogin";
 
 const queryClient = new QueryClient();
+
+function RedirectDashboardProjectToFounder() {
+  const { projectId } = useParams();
+  return <Navigate to={`/founder/${projectId}`} replace />;
+}
 
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <Toaster />
-        <Sonner />
-        <HashRouter>
-          <Routes>
-            {/* Founder loop starts on Idea */}
-            <Route path="/" element={<Idea />} />
-            <Route path="/projects" element={<Projects />} />
+      <FounderAuthProvider>
+        <TooltipProvider>
+          <Toaster />
+          <Sonner />
+          <HashRouter>
+            <Routes>
+              <Route path="/founder-login" element={<FounderLogin />} />
 
-            {/* Public MVP — customer view */}
-            <Route path="/p" element={<PublicMVP />} />
-            <Route path="/p/:projectId" element={<PublicMVP />} />
+              {/* Primary product: Video MVP (upload → clips → thumbnail → confirm → dashboard) */}
+              <Route path="/" element={<Navigate to="/clips" replace />} />
+              <Route path="/clips" element={<ClipSelectionPage />} />
+              <Route path="/thumbnail" element={<ThumbnailSelectionPage />} />
+              <Route path="/preview" element={<PreviewPage />} />
+              <Route path="/video" element={<VideoMVP />} />
+              <Route path="/dashboard" element={<DashboardPage />} />
 
-            {/* Standalone founder flow */}
-            <Route path="/idea" element={<Idea />} />
-            <Route path="/questions" element={<Questions />} />
-            <Route path="/generate" element={<GenerateMVP />} />
+              {/* Public MVP — customer view */}
+              <Route path="/p" element={<PublicMVP />} />
+              <Route path="/p/:projectId" element={<PublicMVP />} />
+              <Route path="/video-mvp" element={<Navigate to="/clips" replace />} />
+              <Route path="/video-mvp/:projectId" element={<Navigate to="/clips" replace />} />
 
-            {/* Founder mode: project-scoped layout pages */}
-            <Route element={<AppLayout />}>
-              <Route path="/builder/:projectId" element={<Builder />} />
-              <Route path="/publish/:projectId" element={<Publish />} />
-              <Route path="/dashboard/:projectId" element={<Dashboard />} />
-              <Route path="/tests/:projectId" element={<Tests />} />
-              <Route path="/preview/:projectId" element={<PreviewChanges />} />
-              <Route path="/versions/:projectId" element={<Versions />} />
-              <Route path="/get-users/:projectId" element={<GetUsers />} />
-              <Route path="/detail/feedback/:projectId" element={<FeedbackDetail />} />
-              <Route path="/detail/surveys/:projectId" element={<SurveyDetail />} />
-              <Route path="/detail/price-intent/:projectId" element={<PriceIntentDetail />} />
-              <Route path="/detail/emails/:projectId" element={<EmailsDetail />} />
-              <Route path="/detail/drop-off/:projectId" element={<DropOffDetail />} />
-              <Route path="/detail/usage/:projectId" element={<UsageDetail />} />
-            </Route>
+              {/* growth_tool user product (no founder chrome) */}
+              <Route path="/app/:projectId" element={<GrowthToolApp />} />
 
-            {/* Compatibility aliases from previous root flow */}
-            <Route path="/mvp-setup" element={<Navigate to="/questions" replace />} />
-            <Route path="/project" element={<Navigate to="/generate" replace />} />
+              {/* Legacy entry points → Video MVP */}
+              <Route path="/idea" element={<Navigate to="/" replace />} />
+              <Route path="/questions" element={<Navigate to="/" replace />} />
+              <Route path="/generate" element={<Navigate to="/" replace />} />
+              <Route path="/generate/:projectId" element={<Navigate to="/video-mvp/:projectId" replace />} />
+              <Route path="/results/:projectId" element={<ClipResults />} />
+              <Route path="/guidance/:projectId" element={<Guidance />} />
 
-            {/* Legacy shortcuts */}
-            <Route path="/builder" element={<Navigate to="/builder/default" replace />} />
-            <Route path="/publish" element={<Navigate to="/publish/default" replace />} />
-            <Route path="/dashboard" element={<Navigate to="/dashboard/default" replace />} />
-            <Route path="/tests" element={<Navigate to="/tests/default" replace />} />
-            <Route path="/preview" element={<Navigate to="/preview/default" replace />} />
-            <Route path="/versions" element={<Navigate to="/versions/default" replace />} />
-            <Route path="/get-users" element={<Navigate to="/get-users/default" replace />} />
-            <Route path="/insights" element={<Navigate to="/tests/default" replace />} />
-            <Route path="/insights/:projectId" element={<Navigate to="/tests/default" replace />} />
+              {/* Founder-only: AI CEO, projects, validation, internal metrics, preview changes, builder, etc. */}
+              <Route element={<FounderGate />}>
+                <Route path="/projects" element={<Projects />} />
+                <Route path="/internal" element={<InternalMetrics />} />
+                <Route path="/dashboard/:projectId" element={<RedirectDashboardProjectToFounder />} />
+                <Route element={<AppLayout />}>
+                  <Route path="/builder/:projectId" element={<Builder />} />
+                  <Route path="/publish/:projectId" element={<Publish />} />
+                  <Route path="/founder/:projectId" element={<Dashboard />} />
+                  <Route path="/tests/:projectId" element={<Tests />} />
+                  <Route path="/preview/:projectId" element={<PreviewChanges />} />
+                  <Route path="/versions/:projectId" element={<Versions />} />
+                  <Route path="/get-users/:projectId" element={<GetUsers />} />
+                  <Route path="/detail/feedback/:projectId" element={<FeedbackDetail />} />
+                  <Route path="/detail/surveys/:projectId" element={<SurveyDetail />} />
+                  <Route path="/detail/price-intent/:projectId" element={<PriceIntentDetail />} />
+                  <Route path="/detail/emails/:projectId" element={<EmailsDetail />} />
+                  <Route path="/detail/drop-off/:projectId" element={<DropOffDetail />} />
+                  <Route path="/detail/usage/:projectId" element={<UsageDetail />} />
+                </Route>
+              </Route>
 
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </HashRouter>
-      </TooltipProvider>
+              {/* Compatibility aliases from previous root flow */}
+              <Route path="/mvp-setup" element={<Navigate to="/" replace />} />
+              <Route path="/project" element={<Navigate to="/" replace />} />
+
+              {/* Legacy shortcuts */}
+              <Route path="/builder" element={<Navigate to="/builder/default" replace />} />
+              <Route path="/publish" element={<Navigate to="/publish/default" replace />} />
+              <Route path="/dashboard/default" element={<Navigate to="/dashboard" replace />} />
+              <Route path="/tests" element={<Navigate to="/tests/default" replace />} />
+              <Route path="/preview/default" element={<Navigate to="/preview" replace />} />
+              <Route path="/versions" element={<Navigate to="/versions/default" replace />} />
+              <Route path="/get-users" element={<Navigate to="/get-users/default" replace />} />
+              <Route path="/insights" element={<Navigate to="/tests/default" replace />} />
+              <Route path="/insights/:projectId" element={<Navigate to="/tests/default" replace />} />
+
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </HashRouter>
+        </TooltipProvider>
+      </FounderAuthProvider>
     </QueryClientProvider>
   );
 }

@@ -5,6 +5,7 @@ import { useProjectId } from "@/hooks/useProject";
 import { getProjectData, incrementShareOutreach } from "@/lib/projectData";
 import { computeFunnel } from "@/lib/trackingEvents";
 import { hashAppUrl } from "@/lib/hashRoutes";
+import { sanitizeIdeaForPersistence } from "@/lib/mvp/ideaContentSafety";
 
 const SHARE_GOAL = 10;
 
@@ -12,7 +13,7 @@ const GetUsers = () => {
   const projectId = useProjectId();
   const [copied, setCopied] = useState(false);
   const shareUrl = hashAppUrl(`/p/${projectId}`);
-  const idea = localStorage.getItem("alize_idea") || "My Startup";
+  const idea = sanitizeIdeaForPersistence(localStorage.getItem("alize_idea") || "") || "My Startup";
   const data = getProjectData(projectId);
   const tracked = computeFunnel(projectId);
 
@@ -136,7 +137,6 @@ const GetUsers = () => {
             Email
           </a>
         </div>
-        <p className="text-[10px] text-muted-foreground mt-3 font-mono truncate">{shareUrl}</p>
       </div>
 
       {/* Validation progress (existing) */}

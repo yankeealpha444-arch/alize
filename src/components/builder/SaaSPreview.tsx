@@ -1,10 +1,23 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { MessageCircle, X, Send, Star, ArrowRight, Check, Sparkles, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { addEmailCapture, addFeedback, getMvpCustomizations, MvpCustomizations } from "@/lib/projectData";
 import { generateCopy } from "@/lib/copyGenerator";
-import { detectProductType, getProductTypeInfo } from "@/lib/productType";
+import { detectProductType } from "@/lib/productType";
+import { getTemplateFamily, interpolateFamilyString } from "@/lib/templateFamilies";
 import { hashAppUrl } from "@/lib/hashRoutes";
+import {
+  saasShellClass,
+  saasNavClass,
+  saasPrimaryButtonClass,
+  saasSecondaryButtonClass,
+  saasCardClass,
+} from "@/lib/saasPreviewVisual";
+import { useSaaSVisualWithHero } from "@/hooks/useSaaSVisualWithHero";
+import FounderLoopPreview from "@/components/builder/FounderLoopPreview";
+import MarketplaceMVP from "@/components/marketplace/MarketplaceMVP";
+import GrowthToolMVP from "@/components/growth/GrowthToolMVP";
+import { sanitizeIdeaForPersistence } from "@/lib/mvp/ideaContentSafety";
 
 interface SaaSPreviewProps {
   projectName: string;
@@ -27,14 +40,14 @@ function Section({
   dataSection?: string;
 }) {
   return (
-    <div id={id} data-section={dataSection} className={`px-6 py-10 border-b border-border ${className}`}>
+    <div id={id} data-section={dataSection} className={`px-6 md:px-8 py-12 md:py-16 border-b border-white/10 bg-white/[0.03] ${className}`}>
       {children}
     </div>
   );
 }
 
 export default function SaaSPreview({ projectName, activeSection, includePricing, projectId = "default" }: SaaSPreviewProps) {
-  const idea = localStorage.getItem("alize_idea") || projectName;
+  const idea = sanitizeIdeaForPersistence(localStorage.getItem("alize_idea") || "") || projectName;
   const [chatOpen, setChatOpen] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [signedUp, setSignedUp] = useState(false);
@@ -57,6 +70,13 @@ export default function SaaSPreview({ projectName, activeSection, includePricing
   const [customizations, setCustomizations] = useState<MvpCustomizations>(() => getMvpCustomizations(projectId));
 
   const productType = detectProductType(idea);
+  const family = useMemo(() => getTemplateFamily(productType), [productType]);
+
+  useEffect(() => {
+    if (import.meta.env.DEV) {
+      console.log("RENDERING TEMPLATE:", productType);
+    }
+  }, [productType]);
   const isToolFirst = productType === "tool" || productType === "ai-tool";
   const isMarketplace = productType === "marketplace";
   const isLanding = productType === "landing";
@@ -64,6 +84,10 @@ export default function SaaSPreview({ projectName, activeSection, includePricing
   useEffect(() => {
     setCustomizations(getMvpCustomizations(projectId));
   }, [projectId]);
+
+  useEffect(() => {
+    setSelectedOnboarding({});
+  }, [productType, idea]);
 
   useEffect(() => {
     const handler = () => setCustomizations(getMvpCustomizations(projectId));
@@ -75,6 +99,12 @@ export default function SaaSPreview({ projectName, activeSection, includePricing
   const headline = customizations.headline || copy.headline;
   const subtitle = customizations.subtitle || copy.subtitle;
   const ctaText = customizations.ctaText || copy.cta;
+  const visual = useSaaSVisualWithHero(idea, headline, productType);
+  const [heroImgBroken, setHeroImgBroken] = useState(false);
+  const heroImageSrc = heroImgBroken ? visual.heroFallbackUrl : visual.heroPrimaryUrl;
+  useEffect(() => {
+    setHeroImgBroken(false);
+  }, [visual.heroPrimaryUrl]);
 
   const botResponses = [
     "Great question! You can start by setting up your first project in the dashboard.",
@@ -142,123 +172,104 @@ export default function SaaSPreview({ projectName, activeSection, includePricing
     toast.success(`Interest in ${planName} plan registered!`);
   };
 
+  if (productType === "marketplace") {
+    return (
+      <div className={`text-foreground relative ${saasShellClass} [&_.text-muted-foreground]:text-slate-400/90`}>
+        <MarketplaceMVP projectId={projectId} idea={idea} headline={headline} subtitle={subtitle} embedded />
+      </div>
+    );
+  }
+
+  if (productType === "growth_tool") {
+    return (
+      <div className={`text-foreground relative ${saasShellClass} [&_.text-muted-foreground]:text-slate-400/90`}>
+        <GrowthToolMVP projectId={projectId} idea={idea} headline={headline} subtitle={subtitle} embedded />
+      </div>
+    );
+  }
+
   return (
-    <div className="text-foreground relative">
+    <div className={`text-foreground relative ${saasShellClass} [&_.text-muted-foreground]:text-slate-400/90`}>
       {/* Nav */}
-      <div className="flex items-center justify-between px-6 py-3 border-b border-border bg-card/80 backdrop-blur-sm sticky top-0 z-10">
+      <div className={`flex items-center justify-between px-6 py-3.5 sticky top-0 z-10 ${saasNavClass}`}>
         <span className="text-sm font-semibold tracking-tight">{projectName}</span>
         <div className="flex items-center gap-4">
           <span onClick={() => scrollTo("how-it-works")} className="text-xs text-muted-foreground hover:text-foreground cursor-pointer transition-colors">How it works</span>
           {includePricing && <span onClick={() => scrollTo("pricing")} className="text-xs text-muted-foreground hover:text-foreground cursor-pointer transition-colors">Pricing</span>}
-          <button onClick={() => scrollTo(isToolFirst ? "try-it" : "signup")} className="text-xs bg-foreground text-background px-4 py-1.5 rounded-md font-medium hover:opacity-90 transition-opacity">
+          <button onClick={() => scrollTo(isToolFirst ? "try-it" : "signup")} className={`text-xs px-4 py-1.5 rounded-lg font-medium ${saasPrimaryButtonClass}`}>
             {isToolFirst ? "Try it free" : isLanding ? "Get early access" : "Get Started"}
           </button>
         </div>
       </div>
 
       {/* 1. Hero */}
-      <Section className="py-20 relative overflow-hidden">
-        <div className="absolute inset-0 bg-gradient-to-br from-secondary/40 via-transparent to-primary/5 pointer-events-none" />
-        <div className="absolute top-10 right-10 w-72 h-72 bg-primary/5 rounded-full blur-3xl pointer-events-none" />
-        <div className="absolute bottom-10 left-10 w-48 h-48 bg-foreground/3 rounded-full blur-2xl pointer-events-none" />
-        <div className="max-w-lg mx-auto text-center relative">
-          <div
-            data-section="hero-tone"
-            className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border border-border bg-secondary/40 text-[10px] text-muted-foreground mb-5"
-          >
-            <Sparkles className="w-3 h-3" />
-            {copy.tagline}
-          </div>
-          <h1 data-section="headline" className="text-3xl md:text-4xl font-bold tracking-tight mb-4 leading-tight capitalize">
-            {headline}
-          </h1>
-          <p data-section="subtitle" className="text-sm text-muted-foreground mb-8 leading-relaxed max-w-md mx-auto">
-            {subtitle}
-          </p>
-          <div className="flex items-center justify-center gap-3 mb-8">
-            <button
-              type="button"
-              data-section="cta"
-              onClick={() => scrollTo(isToolFirst ? "try-it" : "signup")}
-              className="bg-foreground text-background px-7 py-3 rounded-lg text-sm font-semibold hover:opacity-90 transition-opacity shadow-lg"
-            >
-              {ctaText}
-            </button>
-            <button onClick={() => scrollTo("how-it-works")} className="border border-border px-7 py-3 rounded-lg text-sm text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors">
-              See how it works
-            </button>
-          </div>
-          <div className="flex items-center justify-center gap-5 text-[11px] text-muted-foreground">
-            {copy.bullets.slice(0, 3).map(b => (
-              <span key={b} className="flex items-center gap-1.5">
-                <Check className="w-3 h-3 text-foreground/50" />
-                {b}
-              </span>
-            ))}
-          </div>
-        </div>
-        {/* Product mockup — polished browser window */}
-        <div className="mt-12 max-w-lg mx-auto perspective-1000">
-          <div className="rounded-xl border border-border bg-card shadow-2xl overflow-hidden transform hover:scale-[1.01] transition-transform duration-500">
-            <div className="flex items-center gap-1.5 px-4 py-2.5 border-b border-border bg-secondary/30">
-              <div className="w-2.5 h-2.5 rounded-full bg-destructive/40" />
-              <div className="w-2.5 h-2.5 rounded-full bg-[hsl(var(--warning))]/40" />
-              <div className="w-2.5 h-2.5 rounded-full bg-[hsl(var(--success))]/40" />
-              <div className="ml-3 flex-1 h-5 rounded bg-secondary/50 flex items-center px-2">
-                <span className="text-[8px] text-muted-foreground">{projectName.toLowerCase().replace(/\s+/g, '')}.com</span>
+      <Section className="py-20 md:py-24 relative overflow-hidden !bg-transparent">
+        <div className="absolute inset-0 bg-gradient-to-br from-indigo-950/50 via-slate-900/30 to-violet-950/40 pointer-events-none" />
+        <div className="absolute top-10 right-10 w-80 h-80 rounded-full bg-indigo-500/10 blur-3xl pointer-events-none" />
+        <div className="absolute bottom-10 left-10 w-56 h-56 rounded-full bg-violet-500/10 blur-3xl pointer-events-none" />
+        <div className="max-w-6xl mx-auto relative z-[1]">
+          <div className="grid lg:grid-cols-2 gap-10 lg:gap-14 items-center">
+            <div className="max-w-lg mx-auto lg:mx-0 text-center lg:text-left">
+              <div
+                data-section="hero-tone"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-white/15 bg-white/5 text-[10px] text-muted-foreground mb-5"
+              >
+                <Sparkles className="w-3 h-3" />
+                {copy.tagline}
               </div>
-            </div>
-            <div className="p-5 space-y-4">
-              {/* Simulated app UI */}
-              <div className="flex items-center gap-3 mb-2">
-                <div className="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center">
-                  <Sparkles className="w-4 h-4 text-primary" />
-                </div>
-                <div>
-                  <div className="h-3 rounded bg-foreground/15 w-24 mb-1" />
-                  <div className="h-2 rounded bg-foreground/8 w-16" />
-                </div>
-                <div className="ml-auto flex gap-1.5">
-                  <div className="h-6 w-14 rounded bg-secondary/60 flex items-center justify-center">
-                    <span className="text-[7px] text-muted-foreground">Dashboard</span>
-                  </div>
-                  <div className="h-6 w-14 rounded bg-foreground/10 flex items-center justify-center">
-                    <span className="text-[7px] text-foreground">+ New</span>
-                  </div>
-                </div>
+              <h1 data-section="headline" className="text-3xl md:text-4xl lg:text-[2.75rem] font-bold tracking-tight mb-4 leading-tight capitalize text-white drop-shadow-sm">
+                {headline}
+              </h1>
+              <p data-section="subtitle" className="text-sm text-muted-foreground mb-8 leading-relaxed max-w-md mx-auto lg:mx-0">
+                {subtitle}
+              </p>
+              <div className="flex flex-wrap items-center justify-center lg:justify-start gap-3 mb-8">
+                <button
+                  type="button"
+                  data-section="cta"
+                  onClick={() => scrollTo(isToolFirst ? "try-it" : "signup")}
+                  className={`px-7 py-3 rounded-xl text-sm font-semibold shadow-lg ${saasPrimaryButtonClass}`}
+                >
+                  {ctaText}
+                </button>
+                <button onClick={() => scrollTo("how-it-works")} className={`px-7 py-3 rounded-xl text-sm ${saasSecondaryButtonClass}`}>
+                  {family.sectionLabels.secondaryCta}
+                </button>
               </div>
-              <div className="grid grid-cols-3 gap-2">
-                {["Active", "Pending", "Complete"].map(label => (
-                  <div key={label} className="rounded-lg bg-secondary/30 p-3 text-center">
-                    <p className="text-lg font-bold text-foreground">{Math.floor(Math.random() * 50 + 10)}</p>
-                    <p className="text-[8px] text-muted-foreground mt-0.5">{label}</p>
-                  </div>
-                ))}
-              </div>
-              <div className="space-y-2">
-                {[85, 60, 40].map((w, i) => (
-                  <div key={i} className="flex items-center gap-2">
-                    <div className="w-6 h-6 rounded bg-secondary/40" />
-                    <div className="flex-1">
-                      <div className="h-2.5 rounded bg-foreground/8 mb-1" style={{ width: `${w}%` }} />
-                      <div className="h-2 rounded bg-foreground/5 w-1/3" />
-                    </div>
-                    <div className="h-5 w-12 rounded bg-secondary/40" />
-                  </div>
+              <div className="flex flex-wrap items-center justify-center lg:justify-start gap-5 text-[11px] text-muted-foreground">
+                {copy.bullets.slice(0, 3).map(b => (
+                  <span key={b} className="flex items-center gap-1.5">
+                    <Check className="w-3 h-3 text-indigo-400/90" />
+                    {b}
+                  </span>
                 ))}
               </div>
             </div>
+            <div className="relative mx-auto max-w-xl w-full">
+              <img
+                src={heroImageSrc}
+                alt=""
+                onError={() => setHeroImgBroken(true)}
+                className="w-full rounded-2xl object-cover aspect-[4/3] shadow-2xl ring-1 ring-white/10 transition-transform duration-500 hover:scale-[1.02]"
+              />
+              <div className="pointer-events-none absolute -inset-1 rounded-3xl bg-gradient-to-tr from-indigo-500/25 to-fuchsia-500/10 blur-2xl -z-10" />
+            </div>
           </div>
         </div>
+        {productType !== "growth_tool" && <FounderLoopPreview projectId={projectId} />}
       </Section>
 
       {/* Tool-first: Try it section */}
       {isToolFirst && (
-        <Section id="try-it" className="bg-secondary/5">
+        <Section id="try-it" className="!bg-slate-900/20">
           <div className="max-w-md mx-auto text-center">
-            <h2 className="text-xl font-bold mb-2">Try it now — no signup needed</h2>
-            <p className="text-xs text-muted-foreground mb-6">See the result instantly. Sign up to save your work.</p>
-            <div className="rounded-xl border border-border bg-card p-6">
+            <h2 className="text-xl font-bold mb-2 text-white">
+              {family.sectionLabels.tryItTitle || "Try it now — no signup needed"}
+            </h2>
+            <p className="text-xs text-muted-foreground mb-6">
+              {family.sectionLabels.tryItSubtitle || "See the result instantly. Sign up to save your work."}
+            </p>
+            <div className={`p-6 ${saasCardClass}`}>
               {!toolProcessing && !toolUsed ? (
                 <>
                   <div
@@ -289,7 +300,7 @@ export default function SaaSPreview({ projectName, activeSection, includePricing
                         setToolProgress(Math.min(p, 100));
                       }, 500);
                     }}
-                    className="w-full bg-foreground text-background py-3 rounded-lg text-sm font-semibold hover:opacity-90 transition-opacity"
+                    className={`w-full py-3 rounded-xl text-sm font-semibold ${saasPrimaryButtonClass}`}
                   >
                     {productType === "ai-tool" ? "Generate with AI" : "Process now"}
                   </button>
@@ -327,7 +338,7 @@ export default function SaaSPreview({ projectName, activeSection, includePricing
                       handleEmailSave();
                       toast.success("Result sent to your email!");
                     }}
-                    className="w-full bg-foreground text-background py-3 rounded-lg text-sm font-semibold hover:opacity-90 transition-opacity"
+                    className={`w-full py-3 rounded-xl text-sm font-semibold ${saasPrimaryButtonClass}`}
                   >
                     Download result
                   </button>
@@ -340,13 +351,19 @@ export default function SaaSPreview({ projectName, activeSection, includePricing
 
       {/* Marketplace: Browse section */}
       {isMarketplace && (
-        <Section id="browse" className="bg-secondary/5">
-          <h2 className="text-xl font-bold text-center mb-2">Browse listings</h2>
-          <p className="text-xs text-muted-foreground text-center mb-6">Find exactly what you're looking for</p>
+        <Section id="browse" className="!bg-slate-900/20">
+          <h2 className="text-xl font-bold text-center mb-2 text-white">
+            {family.sectionLabels.browseTitle || "Browse listings"}
+          </h2>
+          <p className="text-xs text-muted-foreground text-center mb-6">
+            {family.sectionLabels.browseSubtitle || "Find exactly what you're looking for"}
+          </p>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-4 max-w-lg mx-auto">
             {[1, 2, 3, 4, 5, 6].map(i => (
-              <div key={i} className="rounded-xl border border-border bg-card overflow-hidden cursor-pointer hover:border-foreground/20 transition-colors" onClick={() => toast.info("Sign up to view full details")}>
-                <div className="h-28 bg-secondary/30" />
+              <div key={i} className={`overflow-hidden cursor-pointer ${saasCardClass}`} onClick={() => toast.info("Sign up to view full details")}>
+                <div className="h-28 overflow-hidden">
+                  <img src={visual.featureThumbUrl(i + 10)} alt="" className="h-full w-full object-cover transition-transform duration-300 hover:scale-105" />
+                </div>
                 <div className="p-3">
                   <div className="h-3 rounded bg-secondary/40 w-3/4 mb-2" />
                   <div className="h-2.5 rounded bg-secondary/30 w-1/2" />
@@ -356,7 +373,7 @@ export default function SaaSPreview({ projectName, activeSection, includePricing
             ))}
           </div>
           <div className="text-center mt-6">
-            <button onClick={() => scrollTo("signup")} className="bg-foreground text-background px-6 py-2.5 rounded-lg text-sm font-semibold hover:opacity-90 transition-opacity">
+            <button onClick={() => scrollTo("signup")} className={`px-6 py-2.5 rounded-xl text-sm font-semibold ${saasPrimaryButtonClass}`}>
               Sign up to see all listings
             </button>
           </div>
@@ -365,12 +382,17 @@ export default function SaaSPreview({ projectName, activeSection, includePricing
 
       {/* How it works */}
       <Section id="how-it-works">
-        <h2 className="text-xl font-bold text-center mb-2">How it works</h2>
-        <p className="text-xs text-muted-foreground text-center mb-8">Get started in {copy.howItWorks.length} simple steps</p>
+        <h2 className="text-xl font-bold text-center mb-2 text-white">{family.sectionLabels.howItWorksTitle}</h2>
+        <p className="text-xs text-muted-foreground text-center mb-8">
+          {interpolateFamilyString(family.sectionLabels.howItWorksSubtitle, idea, projectName)}
+        </p>
         <div className="grid grid-cols-3 gap-4 max-w-lg mx-auto">
-          {copy.howItWorks.map(s => (
-            <div key={s.step} className="text-center p-4 rounded-xl border border-border bg-card">
-              <div className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center mx-auto mb-3 text-xs font-bold text-foreground">{s.step}</div>
+          {copy.howItWorks.map((s, idx) => (
+            <div key={s.step} className={`text-center p-4 ${saasCardClass}`}>
+              <div className="mb-3 mx-auto h-14 w-full max-w-[5.5rem] overflow-hidden rounded-lg ring-1 ring-white/10">
+                <img src={visual.featureThumbUrl(idx)} alt="" className="h-full w-full object-cover" />
+              </div>
+              <div className="w-8 h-8 rounded-full bg-indigo-500/20 flex items-center justify-center mx-auto mb-3 text-xs font-bold text-white">{s.step}</div>
               <p className="text-sm font-semibold mb-1">{s.title}</p>
               <p className="text-[11px] text-muted-foreground leading-relaxed">{s.desc}</p>
             </div>
@@ -381,15 +403,18 @@ export default function SaaSPreview({ projectName, activeSection, includePricing
       {/* Testimonials */}
       {customizations.showTestimonials && (
         <Section dataSection="testimonials">
-          <h2 className="text-xl font-bold text-center mb-6">What people are saying</h2>
+          <h2 className="text-xl font-bold text-center mb-6 text-white">What people are saying</h2>
           <div className="grid grid-cols-2 gap-4 max-w-md mx-auto">
             {[
               { name: "Sarah K.", text: "This changed how I work. Highly recommended!" },
               { name: "Mike T.", text: "Simple, effective, and saves me hours every week." },
-            ].map((t) => (
-              <div key={t.name} className="p-5 rounded-xl border border-border bg-card">
+            ].map((t, ti) => (
+              <div key={t.name} className={`p-5 ${saasCardClass}`}>
                 <p className="text-xs text-muted-foreground mb-3 leading-relaxed">"{t.text}"</p>
-                <p className="text-[11px] font-semibold text-foreground">— {t.name}</p>
+                <div className="flex items-center gap-2.5">
+                  <img src={visual.avatarUrl(ti)} alt="" className="h-9 w-9 rounded-full object-cover ring-2 ring-white/10 shrink-0" />
+                  <p className="text-[11px] font-semibold text-white">— {t.name}</p>
+                </div>
               </div>
             ))}
           </div>
@@ -469,27 +494,31 @@ export default function SaaSPreview({ projectName, activeSection, includePricing
         </div>
       </Section>
 
-      {/* 3. Onboarding — SaaS only */}
-      {productType === "saas" && (
+      {/* 3. Onboarding — template family */}
+      {family.onboarding.length > 0 && (
         <Section>
-          <h2 className="text-xl font-bold mb-1">Personalize your experience</h2>
-          <p className="text-xs text-muted-foreground mb-5">Quick setup so we can tailor things for you</p>
+          <h2 className="text-xl font-bold mb-1">
+            {interpolateFamilyString(family.sectionLabels.onboardingTitle, idea, projectName)}
+          </h2>
+          <p className="text-xs text-muted-foreground mb-5">
+            {interpolateFamilyString(family.sectionLabels.onboardingSubtitle, idea, projectName)}
+          </p>
           <div className="space-y-3 max-w-lg">
-            {[
-              { q: `What do you want to achieve with ${projectName}?`, options: ["Track progress", "Save time", "Grow revenue", "Stay organized"] },
-              { q: "How are you currently solving this?", options: ["Spreadsheets", "Another tool", "Manual process", "Not solving it yet"] },
-              { q: "What describes you best?", options: ["Individual", "Small team", "Company", "Just exploring"] },
-            ].map((item, i) => (
+            {family.onboarding.map((item, i) => (
               <div key={i} className="p-4 rounded-xl border border-border bg-card">
-                <p className="text-[10px] text-muted-foreground mb-2">Step {i + 1} of 3</p>
-                <p className="text-sm font-medium mb-3">{item.q}</p>
+                <p className="text-[10px] text-muted-foreground mb-2">
+                  Step {i + 1} of {family.onboarding.length}
+                </p>
+                <p className="text-sm font-medium mb-3">{interpolateFamilyString(item.q, idea, projectName)}</p>
                 <div className="flex flex-wrap gap-2">
                   {item.options.map((opt) => (
                     <button
                       key={opt}
+                      type="button"
                       onClick={() => {
-                        setSelectedOnboarding({ ...selectedOnboarding, [i]: opt });
-                        if (Object.keys(selectedOnboarding).length >= 2) setOnboarded(true);
+                        const next = { ...selectedOnboarding, [i]: opt };
+                        setSelectedOnboarding(next);
+                        if (Object.keys(next).length === family.onboarding.length) setOnboarded(true);
                       }}
                       className={`text-xs px-3 py-2 rounded-lg border transition-all ${
                         selectedOnboarding[i] === opt
@@ -504,8 +533,9 @@ export default function SaaSPreview({ projectName, activeSection, includePricing
               </div>
             ))}
           </div>
-          {Object.keys(selectedOnboarding).length === 3 && (
+          {Object.keys(selectedOnboarding).length === family.onboarding.length && (
             <button
+              type="button"
               onClick={() => { setOnboarded(true); toast.success("Onboarding complete!"); }}
               className="mt-5 bg-foreground text-background px-6 py-2.5 rounded-lg text-sm font-semibold hover:opacity-90 transition-opacity"
             >
@@ -515,15 +545,20 @@ export default function SaaSPreview({ projectName, activeSection, includePricing
         </Section>
       )}
 
-      {/* 4. Core Product — SaaS only */}
-      {productType === "saas" && (
+      {/* 4. Core Product — template family actions */}
+      {family.productActions.length > 0 && (
         <Section>
-          <h2 className="text-xl font-bold mb-1">Your {idea.toLowerCase()} at a glance</h2>
-          <p className="text-xs text-muted-foreground mb-5">Here's what you can do with {projectName}</p>
-          <div className="grid grid-cols-3 gap-2">
-            {["Create item", "View reports", "Invite team"].map((action) => (
+          <h2 className="text-xl font-bold mb-1">
+            {interpolateFamilyString(family.sectionLabels.coreProductTitle, idea, projectName)}
+          </h2>
+          <p className="text-xs text-muted-foreground mb-5">
+            {interpolateFamilyString(family.sectionLabels.coreProductSubtitle, idea, projectName)}
+          </p>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            {family.productActions.map((action) => (
               <button
                 key={action}
+                type="button"
                 onClick={() => {
                   toast.success(`${action} — feature ready`);
                   if (!showEmailCapture) setShowEmailCapture(true);
@@ -588,9 +623,15 @@ export default function SaaSPreview({ projectName, activeSection, includePricing
 
       {/* 7. Pricing — Interest Capture (type-aware) */}
       {includePricing && (
-        <Section id="pricing" dataSection="pricing">
-          <h2 className="text-xl font-bold text-center mb-1">
-            {isToolFirst ? "Pricing" : isMarketplace ? "How it works" : "Choose your plan"}
+        <Section id="pricing" dataSection="pricing" className="relative overflow-hidden !bg-gradient-to-br !from-indigo-950/40 !via-slate-900/50 !to-violet-950/30">
+          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_bottom,_rgba(99,102,241,0.12),_transparent_55%)]" />
+          <div className="relative">
+          <h2 className="text-xl font-bold text-center mb-1 text-white">
+            {isToolFirst
+              ? family.sectionLabels.pricingTitleTool
+              : isMarketplace
+                ? family.sectionLabels.pricingTitleMarketplace
+                : family.sectionLabels.pricingTitleDefault}
           </h2>
           <p className="text-xs text-muted-foreground text-center mb-8">
             {customizations.pricingCopy || (isToolFirst ? "Try free. Pay only when you need more." : "Start free. Upgrade when you're ready.")}
@@ -600,10 +641,10 @@ export default function SaaSPreview({ projectName, activeSection, includePricing
               <div
                 key={plan.name}
                 onClick={() => handlePlanSelect(plan.name)}
-                className={`p-6 rounded-xl border-2 text-center cursor-pointer transition-all ${
+                className={`p-6 rounded-2xl border-2 text-center cursor-pointer transition-all ${saasCardClass} ${
                   selectedPlan === plan.name
-                    ? "border-foreground bg-foreground/[0.03] shadow-lg"
-                    : "border-border hover:border-foreground/20"
+                    ? "!border-indigo-400/50 shadow-indigo-500/10"
+                    : "border-white/10 hover:border-white/25"
                 }`}
               >
                 <p className="text-sm font-bold">{plan.name}</p>
@@ -620,7 +661,7 @@ export default function SaaSPreview({ projectName, activeSection, includePricing
                 {selectedPlan === plan.name && planInterest !== plan.name ? (
                   <button
                     onClick={(e) => { e.stopPropagation(); handlePlanInterest(plan.name, plan.cta); }}
-                    className="w-full py-2.5 text-xs rounded-lg bg-foreground text-background font-semibold hover:opacity-90 transition-opacity"
+                    className={`w-full py-2.5 text-xs rounded-xl font-semibold ${saasPrimaryButtonClass}`}
                   >
                     {plan.cta}
                   </button>
@@ -637,6 +678,7 @@ export default function SaaSPreview({ projectName, activeSection, includePricing
               </div>
             ))}
           </div>
+          </div>
         </Section>
       )}
 
@@ -647,20 +689,20 @@ export default function SaaSPreview({ projectName, activeSection, includePricing
           <h2 className="text-xl font-bold mb-2">You've seen the full product</h2>
           <p className="text-sm text-muted-foreground mb-6">Thanks for trying {projectName}. We improve every week based on your feedback.</p>
           <div className="flex items-center justify-center gap-3">
-            <button onClick={() => setFeedbackOpen(true)} className="bg-foreground text-background px-6 py-2.5 rounded-lg text-sm font-semibold hover:opacity-90 transition-opacity">Give feedback</button>
-            <button onClick={() => scrollTo("how-it-works")} className="border border-border px-6 py-2.5 rounded-lg text-sm text-muted-foreground hover:text-foreground transition-colors">Go to product dashboard</button>
+            <button onClick={() => setFeedbackOpen(true)} className={`px-6 py-2.5 rounded-xl text-sm font-semibold ${saasPrimaryButtonClass}`}>Give feedback</button>
+            <button onClick={() => scrollTo("how-it-works")} className={`px-6 py-2.5 rounded-xl text-sm ${saasSecondaryButtonClass}`}>Go to product dashboard</button>
           </div>
         </div>
       </Section>
 
       {/* Built with Alizé footer */}
-      <div className="px-6 py-5 text-center border-t border-border bg-secondary/10">
+      <div className="px-6 py-5 text-center border-t border-white/10 bg-slate-950/60">
         <p className="text-[10px] text-muted-foreground">
           Built with <span className="font-semibold text-foreground">Alizé</span> · Build your own MVP and know exactly what to do next
         </p>
         <button
           type="button"
-          onClick={() => { window.location.href = hashAppUrl("/idea"); }}
+          onClick={() => { window.location.href = hashAppUrl("/"); }}
           className="text-[10px] text-muted-foreground underline hover:text-foreground mt-1 transition-colors"
         >
           Build with Alizé →

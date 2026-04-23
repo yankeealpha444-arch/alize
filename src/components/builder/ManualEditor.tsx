@@ -3,13 +3,14 @@ import { Save, RotateCcw } from "lucide-react";
 import { getMvpCustomizations, updateMvpCustomizations, addVersion } from "@/lib/projectData";
 import { generateCopy } from "@/lib/copyGenerator";
 import { toast } from "sonner";
+import { sanitizeIdeaForPersistence } from "@/lib/mvp/ideaContentSafety";
 
 interface ManualEditorProps {
   projectId?: string;
 }
 
 export default function ManualEditor({ projectId = "default" }: ManualEditorProps) {
-  const idea = localStorage.getItem("alize_idea") || "My Product";
+  const idea = sanitizeIdeaForPersistence(localStorage.getItem("alize_idea") || "") || "My Product";
   const projectName = idea.split(" ").slice(0, 4).join(" ");
   const copy = generateCopy(idea, projectName);
 

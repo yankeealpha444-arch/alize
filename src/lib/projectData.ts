@@ -1,3 +1,16 @@
+import type { MvpBuilderConfig } from "@/lib/mvp/types";
+import type { ProductFrame } from "@/lib/mvp/productFraming";
+import { assessIdeaContentSafety, sanitizeIdeaForPersistence } from "@/lib/mvp/ideaContentSafety";
+import type { IdeaSafetyCategory } from "@/lib/mvp/ideaContentSafety";
+
+export type { ProductFrame } from "@/lib/mvp/productFraming";
+import { supabase } from "@/integrations/supabase/client";
+
+/** Result of persisting an idea after content safety (see `setMvpIdea`). */
+export type SetMvpIdeaResult =
+  | { ideaUsed: string; blocked?: false }
+  | { ideaUsed: string; blocked: true; message: string; category: IdeaSafetyCategory };
+
 // Persistent project data layer using localStorage
 // All founder actions save here; dashboard reads from here
 // Now supports multiple projects via projectId-scoped keys
@@ -48,6 +61,42 @@ export interface MvpCustomizations {
   showTestimonials: boolean;
 }
 
+/** Hook Generator (single template) — persisted per project. */
+export interface HookGeneratorProductState {
+  niche: string;
+  audience: string;
+  hooks: Array<{ id: string; angle: string; text: string }>;
+  selectedHookId: string | null;
+  refinedHookText: string;
+  feedbackHelpful: boolean | null;
+  lastGeneratedAt: string | null;
+}
+
+/** Saved state for growth_tool user app (/app/:projectId). */
+export interface GrowthProductState {
+  channelName: string;
+  platform: "youtube" | "tiktok" | "instagram" | "other";
+  goal: "views" | "subscribers" | "monetization" | "engagement";
+  contentIdeas: string[];
+  weeklyPlan: Array<{ day: string; focus: string }>;
+  experiments: string[];
+  lastGeneratedAt: string | null;
+  uploadType?: "link" | "file";
+  videoLink?: string;
+  uploadedFileName?: string;
+  hookOptions?: Array<{
+    id: string;
+    startSec: number;
+    endSec: number;
+    style: "Pain point" | "Curiosity" | "Transformation" | "Urgency" | "Authority";
+    hookLine: string;
+    whyItWorks: string;
+  }>;
+  selectedHookId?: string | null;
+  videoTitle?: string | null;
+  videoAuthor?: string | null;
+}
+
 export interface ProjectData {
   surveys: SurveyResponse[];
   emails: EmailCapture[];
@@ -57,6 +106,18 @@ export interface ProjectData {
   publishedAt: string | null;
   /** User-initiated share / outreach actions (Get Users page). */
   shareOutreachCount?: number;
+  /** Idea text stored with the project (for /app without relying on localStorage). */
+  mvpIdea?: string;
+  /** growth_tool: user workspace data */
+  growthState?: GrowthProductState;
+  /** Unified Hook Generator template state */
+  hookGeneratorState?: HookGeneratorProductState;
+  /** Internal: niche/audience derived from idea (not shown as explicit UI) */
+  ideaContext?: { niche: string; audience: string };
+  /** MVP Builder: which fixed template + label config */
+  mvpBuilder?: MvpBuilderConfig;
+  /** Archetype + product framing (Lovable-style product shell). */
+  productFrame?: ProductFrame;
 }
 
 const defaults: ProjectData = {
@@ -76,10 +137,36 @@ const defaults: ProjectData = {
   },
   publishedAt: null,
   shareOutreachCount: 0,
+  mvpIdea: undefined,
+  growthState: undefined,
+  hookGeneratorState: undefined,
+  ideaContext: undefined,
+  mvpBuilder: undefined,
+  productFrame: undefined,
 };
 
 function storageKey(projectId: string): string {
   return `${KEY_PREFIX}${projectId}`;
+}
+
+/** Normalize persisted idea fields when rules expand or legacy rows had unsafe text. */
+function patchSanitizedIdeaFields(d: ProjectData): boolean {
+  let changed = false;
+  if (d.mvpIdea?.trim()) {
+    const safe = sanitizeIdeaForPersistence(d.mvpIdea);
+    if (safe && safe !== d.mvpIdea) {
+      d.mvpIdea = safe;
+      changed = true;
+    }
+  }
+  if (d.mvpBuilder?.productName) {
+    const pn = sanitizeIdeaForPersistence(d.mvpBuilder.productName);
+    if (pn && pn !== d.mvpBuilder.productName) {
+      d.mvpBuilder = { ...d.mvpBuilder, productName: pn };
+      changed = true;
+    }
+  }
+  return changed;
 }
 
 export function getProjectData(projectId: string = "default"): ProjectData {
@@ -90,14 +177,41 @@ export function getProjectData(projectId: string = "default"): ProjectData {
       raw = localStorage.getItem(LEGACY_KEY);
     }
     if (!raw) return { ...defaults, versions: [...defaults.versions] };
-    return { ...defaults, ...JSON.parse(raw) };
+    const d: ProjectData = { ...defaults, ...JSON.parse(raw) };
+    patchSanitizedIdeaFields(d);
+    return d;
   } catch {
     return { ...defaults, versions: [...defaults.versions] };
   }
 }
 
+/**
+ * Single source for preview / hook UI: canonical saved idea, then LS when it matches this project, then optional seed.
+ * Always returns text safe for display (never raw blocked input).
+ */
+export function getSanitizedIdeaForDisplay(projectId: string, ideaSeed?: string): string {
+  const fromProject = getProjectData(projectId).mvpIdea?.trim() || "";
+  let legacy = "";
+  let pidMatches = false;
+  try {
+    legacy = localStorage.getItem("alize_idea")?.trim() || "";
+    pidMatches = localStorage.getItem("alize_projectId") === projectId;
+  } catch {
+    /* ignore */
+  }
+  const prop = ideaSeed?.trim() || "";
+  const ignoreProp = prop === "Loading..." || prop === "";
+
+  const raw = fromProject || (pidMatches ? legacy : "") || legacy || (!ignoreProp ? prop : "");
+  if (!raw) return "No idea found yet";
+  return sanitizeIdeaForPersistence(raw) || "No idea found yet";
+}
+
 export function saveProjectData(data: ProjectData, projectId: string = "default") {
   localStorage.setItem(storageKey(projectId), JSON.stringify(data));
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("alize-project-data-updated", { detail: { projectId } }));
+  }
 }
 
 export function addSurveyResponse(answers: Record<number, string>, projectId: string = "default") {
@@ -201,4 +315,179 @@ export function updateMvpCustomizations(updates: Partial<MvpCustomizations>, pro
 
 export function getMvpCustomizations(projectId: string = "default"): MvpCustomizations {
   return getProjectData(projectId).mvpCustomizations;
+}
+
+export function emptyGrowthState(): GrowthProductState {
+  return {
+    channelName: "",
+    platform: "youtube",
+    goal: "views",
+    contentIdeas: [],
+    weeklyPlan: [],
+    experiments: [],
+    lastGeneratedAt: null,
+    uploadType: "link",
+    videoLink: "",
+    uploadedFileName: "",
+    hookOptions: [],
+    selectedHookId: null,
+    videoTitle: null,
+    videoAuthor: null,
+  };
+}
+
+export function getGrowthState(projectId: string): GrowthProductState {
+  const d = getProjectData(projectId);
+  return d.growthState ? { ...emptyGrowthState(), ...d.growthState } : emptyGrowthState();
+}
+
+export function saveGrowthState(state: GrowthProductState, projectId: string) {
+  const d = getProjectData(projectId);
+  d.growthState = state;
+  saveProjectData(d, projectId);
+}
+
+export function setMvpIdea(idea: string, projectId: string): SetMvpIdeaResult {
+  const trimmed = idea.trim();
+  if (!trimmed) {
+    return { ideaUsed: "", blocked: false };
+  }
+
+  const safety = assessIdeaContentSafety(trimmed);
+  const persisted = safety.blocked ? safety.safeAlternative : trimmed;
+  const d = getProjectData(projectId);
+  const changed = d.mvpIdea !== persisted;
+  if (changed) {
+    d.mvpIdea = persisted;
+    saveProjectData(d, projectId);
+    void upsertProjectRecord(projectId, persisted);
+  }
+  if (safety.blocked) {
+    console.warn("[projectData] Idea blocked for safety; stored alternative only.", safety.category);
+    return {
+      ideaUsed: persisted,
+      blocked: true,
+      message: safety.userMessage,
+      category: safety.category,
+    };
+  }
+  return { ideaUsed: persisted, blocked: false };
+}
+
+export function getProductFrame(projectId: string): ProductFrame | undefined {
+  return getProjectData(projectId).productFrame;
+}
+
+export function setProductFrame(frame: ProductFrame, projectId: string) {
+  const d = getProjectData(projectId);
+  const pn = sanitizeIdeaForPersistence(frame.product_name);
+  const op = sanitizeIdeaForPersistence(frame.one_line_promise);
+  const tu = sanitizeIdeaForPersistence(frame.target_user);
+  const co = sanitizeIdeaForPersistence(frame.core_outcome);
+  const next: ProductFrame = {
+    ...frame,
+    product_name: pn || "Product",
+    one_line_promise: op || "—",
+    target_user: tu || "Your ideal customer",
+    core_outcome: co || "—",
+  };
+  const prev = d.productFrame;
+  if (
+    prev &&
+    prev.product_name === next.product_name &&
+    prev.one_line_promise === next.one_line_promise &&
+    prev.target_user === next.target_user &&
+    prev.core_outcome === next.core_outcome &&
+    prev.archetype === next.archetype
+  ) {
+    return;
+  }
+  d.productFrame = next;
+  saveProjectData(d, projectId);
+}
+
+/**
+ * Founder-flow Supabase sync (additive to localStorage):
+ * keeps one canonical project row for cross-device public pages.
+ *
+ * Production writes: PostgREST `POST/PATCH` → `public.projects` (see migration
+ * `supabase/migrations/20260414120000_projects_idea_safety.sql`). The DB trigger
+ * re-sanitizes idea text, rejects null/empty ideas, sets `user_id`/`is_anonymous_draft`
+ * from `auth.uid()`, and keeps `name` derived from sanitized `idea` only.
+ * This function also runs `sanitizeIdeaForPersistence` so direct callers cannot bypass UI.
+ */
+export async function upsertProjectRecord(projectId: string, idea: string): Promise<void> {
+  const pid = String(projectId || "").trim();
+  const safeIdea = sanitizeIdeaForPersistence(String(idea ?? ""));
+  if (!pid || !safeIdea) return;
+  try {
+    const sb = supabase as unknown as {
+      from: (table: string) => {
+        upsert: (
+          row: Record<string, unknown>,
+          opts: { onConflict: string }
+        ) => Promise<{ error: { message?: string } | null }>;
+      };
+    };
+    const { error } = await sb.from("projects").upsert(
+      {
+        id: pid,
+        idea: safeIdea,
+        name: safeIdea.slice(0, 80),
+        status: "active",
+      },
+      { onConflict: "id" },
+    );
+    if (error) {
+      console.error("[projectData] upsertProjectRecord failed:", error.message || error);
+    }
+  } catch (err) {
+    console.error("[projectData] upsertProjectRecord exception:", err);
+  }
+}
+
+export function emptyHookGeneratorState(): HookGeneratorProductState {
+  return {
+    niche: "",
+    audience: "",
+    hooks: [],
+    selectedHookId: null,
+    refinedHookText: "",
+    feedbackHelpful: null,
+    lastGeneratedAt: null,
+  };
+}
+
+export function getHookGeneratorState(projectId: string): HookGeneratorProductState {
+  const d = getProjectData(projectId);
+  return d.hookGeneratorState ? { ...emptyHookGeneratorState(), ...d.hookGeneratorState } : emptyHookGeneratorState();
+}
+
+export function saveHookGeneratorState(state: HookGeneratorProductState, projectId: string) {
+  const d = getProjectData(projectId);
+  d.hookGeneratorState = state;
+  saveProjectData(d, projectId);
+}
+
+export function setIdeaContext(niche: string, audience: string, projectId: string) {
+  const d = getProjectData(projectId);
+  d.ideaContext = {
+    niche: sanitizeIdeaForPersistence(niche),
+    audience: sanitizeIdeaForPersistence(audience),
+  };
+  saveProjectData(d, projectId);
+}
+
+export function saveMvpBuilderConfig(config: MvpBuilderConfig, projectId: string) {
+  const d = getProjectData(projectId);
+  const pn = sanitizeIdeaForPersistence(config.productName);
+  d.mvpBuilder = {
+    ...config,
+    productName: pn || "My MVP",
+  };
+  saveProjectData(d, projectId);
+}
+
+export function getMvpBuilderConfig(projectId: string): MvpBuilderConfig | undefined {
+  return getProjectData(projectId).mvpBuilder;
 }

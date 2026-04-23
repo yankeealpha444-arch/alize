@@ -1,7 +1,11 @@
 // Smart copy generator for MVPs
 // Product-type-aware — generates different copy per lane
 
-import { ProductType, detectProductType } from "./productType";
+import type { ProductType } from "./productType";
+import { detectProductType } from "./productType";
+import type { TemplateFamily } from "./templateFamilies";
+import { getTemplateFamily } from "./templateFamilies";
+import { stripDashesFromDisplayText } from "./textNormalize";
 
 interface GeneratedCopy {
   headline: string;
@@ -13,7 +17,7 @@ interface GeneratedCopy {
   pricingPlans: Array<{ name: string; price: string; desc: string; features: string[]; cta: string }>;
 }
 
-// ── Idea-specific patterns ──────────────────────────────────────────
+// ── Idea-specific patterns (hero + bullets) — skipped when growth_tool / creator_tool (enforced copy) ──
 const ideaPatterns: Array<{
   match: RegExp;
   headline: string;
@@ -23,15 +27,31 @@ const ideaPatterns: Array<{
   bullets: string[];
 }> = [
   {
+    match: /\b(clothes|clothing|fashion|outfit|wear|wardrobe|apparel|digital wardrobe|try on|online shopping for clothes)\b/i,
+    headline: "Wear and shop outfits online — see style before you buy",
+    subtitle: "Browse curated looks, mix pieces, and try styles digitally. Real products, clear prices.",
+    cta: "Browse the collection",
+    tagline: "Fashion marketplace, built for discovery",
+    bullets: ["Curated listings with photos", "Save favorites in one tap", "Fast, simple checkout flow", "New drops weekly"],
+  },
+  {
     match: /pdf.*(google|doc)|google.*doc.*pdf|convert.*pdf/i,
     headline: "Convert PDF to editable Google Docs in seconds",
-    subtitle: "Upload your PDF and get a clean, editable document — no formatting headaches.",
+    subtitle: "Upload your PDF and get a clean, editable document. No formatting headaches.",
     cta: "Convert a file",
     tagline: "The fastest PDF-to-Docs converter",
     bullets: ["Preserves formatting", "No software to install", "Works with any PDF", "Free to try"],
   },
   {
-    match: /social media/i,
+    match: /\b(ai study|study tutor|ai tutor|tutoring|homework help)\b/i,
+    headline: "Your AI study partner that adapts to how you learn",
+    subtitle: "Turn notes, prompts, or topics into explanations and practice. No chaos.",
+    cta: "Start learning",
+    tagline: "Smarter studying, less cramming",
+    bullets: ["Step-by-step explanations", "Quiz yourself on weak spots", "Works with your materials", "Free to try"],
+  },
+  {
+    match: /\bsocial media (dashboard|suite|calendar|scheduler|management|toolkit|platform)\b/i,
     headline: "Manage and grow your social media in one place",
     subtitle: "Plan content, track performance, and improve faster with one simple dashboard.",
     cta: "Start free",
@@ -49,7 +69,7 @@ const ideaPatterns: Array<{
   {
     match: /fitness|workout|gym/i,
     headline: "Train smarter and see real results",
-    subtitle: "Track workouts, follow plans, and stay consistent — all in one app.",
+    subtitle: "Track workouts, follow plans, and stay consistent. All in one app.",
     cta: "Start training",
     tagline: "Your personal fitness system",
     bullets: ["Custom workout plans", "Progress tracking", "Exercise library", "Works on any device"],
@@ -112,40 +132,85 @@ const ideaPatterns: Array<{
   },
 ];
 
-// ── How It Works per product type ───────────────────────────────────
-function getHowItWorks(type: ProductType, idea: string): Array<{ step: string; title: string; desc: string }> {
+function ctaForType(type: ProductType): string {
   switch (type) {
     case "tool":
-      return [
-        { step: "1", title: "Upload or paste", desc: "Add your file or content to process" },
-        { step: "2", title: "Get your result", desc: "See your result instantly — no waiting" },
-        { step: "3", title: "Download or share", desc: "Save your result with one click" },
-      ];
     case "ai-tool":
-      return [
-        { step: "1", title: "Describe what you need", desc: "Tell the AI what you want to create" },
-        { step: "2", title: "AI generates it", desc: "Get your result in seconds" },
-        { step: "3", title: "Download or refine", desc: "Save it or tweak until perfect" },
-      ];
+      return "Try it now, free";
     case "marketplace":
-      return [
-        { step: "1", title: "Browse or list", desc: "Find what you need or post what you're selling" },
-        { step: "2", title: "Connect", desc: "Message buyers or sellers directly" },
-        { step: "3", title: "Deal done", desc: "Complete the transaction securely" },
-      ];
+      return "Browse listings";
     case "landing":
-      return [
-        { step: "1", title: "See what we're building", desc: "Learn about the product and vision" },
-        { step: "2", title: "Join early access", desc: "Get on the list before public launch" },
-        { step: "3", title: "Be first", desc: "Get notified the moment we launch" },
-      ];
-    default: // saas
-      return [
-        { step: "1", title: "Create your account", desc: "Sign up in seconds — no credit card needed" },
-        { step: "2", title: "Set up your workspace", desc: "Tell us what you need and we'll personalize" },
-        { step: "3", title: "Start getting results", desc: "Use the product and see value immediately" },
-      ];
+      return "Get early access";
+    default:
+      return "Get started free";
   }
+}
+
+function buildGrowthEnforcedCopy(idea: string, projectName: string, family: TemplateFamily): Omit<GeneratedCopy, "howItWorks" | "pricingPlans"> {
+  const rawName = projectName.trim() || idea.split(/\s+/).slice(0, 4).join(" ");
+  const pn = stripDashesFromDisplayText(rawName);
+  const yt = /\byoutube\b/i.test(idea);
+  const headline = stripDashesFromDisplayText(
+    `${pn}. ${yt ? "Grow your YouTube faster with clear signals" : "Grow your audience faster with clear signals"}`,
+  );
+  return {
+    headline,
+    subtitle: stripDashesFromDisplayText("See what drives views and double down on what works."),
+    tagline: stripDashesFromDisplayText("Channel analytics without spreadsheet pain"),
+    cta: "Get started free",
+    bullets: family.featureBlocks.map((f) => stripDashesFromDisplayText(f.title)),
+  };
+}
+
+function buildCreatorEnforcedCopy(idea: string, projectName: string, family: TemplateFamily): Omit<GeneratedCopy, "howItWorks" | "pricingPlans"> {
+  const rawName = projectName.trim() || idea.split(/\s+/).slice(0, 4).join(" ");
+  const pn = stripDashesFromDisplayText(rawName);
+  return {
+    headline: stripDashesFromDisplayText(`${pn}. Turn ideas into high performing content faster`),
+    subtitle: stripDashesFromDisplayText("Plan, create, and publish in one calm workflow."),
+    tagline: stripDashesFromDisplayText("Less tool hopping, more shipping"),
+    cta: "Get started free",
+    bullets: family.featureBlocks.map((f) => stripDashesFromDisplayText(f.title)),
+  };
+}
+
+/** When no regex match: hero + bullets come from template family feature blocks. */
+function buildFamilyFirstCopy(idea: string, projectName: string, family: TemplateFamily, type: ProductType): Omit<GeneratedCopy, "howItWorks" | "pricingPlans"> {
+  const cleaned =
+    idea.replace(/\b(app|tool|platform|system|software|saas|product|builder|maker|manager|grower|tracker)\b/gi, "").trim() || idea;
+  const displayName = stripDashesFromDisplayText(projectName.trim() || cleaned.split(/\s+/).slice(0, 4).join(" "));
+  const fb = family.featureBlocks;
+  const h1 = fb[0]?.title ?? family.sectionLabels.featuresSectionTitle;
+  const subtitle = stripDashesFromDisplayText(fb.slice(0, 2).map((f) => f.desc).join(" "));
+  const tagline = stripDashesFromDisplayText(fb[2]?.title ?? family.sectionLabels.featuresSectionSubtitle);
+
+  return {
+    headline: stripDashesFromDisplayText(`${displayName}. ${h1}`),
+    subtitle,
+    tagline,
+    cta: ctaForType(type),
+    bullets: fb.map((f) => stripDashesFromDisplayText(f.title)),
+  };
+}
+
+function sanitizeHowItWorks(steps: Array<{ step: string; title: string; desc: string }>) {
+  return steps.map((s) => ({
+    step: s.step,
+    title: stripDashesFromDisplayText(s.title),
+    desc: stripDashesFromDisplayText(s.desc),
+  }));
+}
+
+function sanitizePricingPlans(
+  plans: Array<{ name: string; price: string; desc: string; features: string[]; cta: string }>,
+) {
+  return plans.map((p) => ({
+    name: stripDashesFromDisplayText(p.name),
+    price: p.price,
+    desc: stripDashesFromDisplayText(p.desc),
+    features: p.features.map((f) => stripDashesFromDisplayText(f)),
+    cta: stripDashesFromDisplayText(p.cta),
+  }));
 }
 
 // ── Pricing per product type ────────────────────────────────────────
@@ -166,7 +231,9 @@ function getPricingPlans(type: ProductType): Array<{ name: string; price: string
       return [
         { name: "Early Access", price: "Free", desc: "Be first in line", features: ["Priority access", "Founding member perks", "Shape the product"], cta: "Join waitlist" },
       ];
-    default: // saas
+    case "saas":
+    case "creator_tool":
+    case "growth_tool":
       return [
         { name: "Free", price: "$0", desc: "For individuals getting started", features: ["Core features", "Basic analytics", "Community support"], cta: "Get started free" },
         { name: "Pro", price: "$29/mo", desc: "For teams that need more", features: ["All features", "Advanced analytics", "Priority support", "Team collaboration"], cta: "Join Pro waitlist" },
@@ -174,70 +241,61 @@ function getPricingPlans(type: ProductType): Array<{ name: string; price: string
   }
 }
 
-// ── Generic copy per type (fallback) ────────────────────────────────
-function getGenericCopy(type: ProductType, idea: string, projectName: string): Omit<GeneratedCopy, "howItWorks" | "pricingPlans"> {
-  const cleaned = idea
-    .replace(/\b(app|tool|platform|system|software|saas|product|builder|maker|manager|grower|tracker)\b/gi, "")
-    .trim() || idea;
-
-  switch (type) {
-    case "tool":
-      return {
-        headline: `${cleaned} — done in seconds`,
-        subtitle: `${projectName} handles it instantly so you don't have to. No signup required to try.`,
-        cta: "Try it now — free",
-        tagline: `The fastest way to ${cleaned.toLowerCase()}`,
-        bullets: ["No signup needed to try", "Results in seconds", "Download instantly", "Free to start"],
-      };
-    case "ai-tool":
-      return {
-        headline: `Generate ${cleaned.toLowerCase()} with AI`,
-        subtitle: `Describe what you need and ${projectName} creates it instantly. No design skills required.`,
-        cta: "Try it now — free",
-        tagline: `AI-powered ${cleaned.toLowerCase()}`,
-        bullets: ["AI does the work", "Unlimited variations", "Download in high quality", "Free to start"],
-      };
-    case "marketplace":
-      return {
-        headline: `The best place to find ${cleaned.toLowerCase()}`,
-        subtitle: `${projectName} connects buyers and sellers. Browse listings or post your own.`,
-        cta: "Browse listings",
-        tagline: `The ${cleaned.toLowerCase()} marketplace`,
-        bullets: ["Browse and compare", "Direct messaging", "Verified listings", "Free to join"],
-      };
-    case "landing":
-      return {
-        headline: `${cleaned} is coming soon`,
-        subtitle: `${projectName} is launching soon. Join the waitlist and help shape the first version.`,
-        cta: "Get early access",
-        tagline: `Coming soon`,
-        bullets: ["Be the first to try", "Shape the product", "Founding member perks", "No spam, ever"],
-      };
-    default: // saas
-      return {
-        headline: `The easier way to ${cleaned.toLowerCase()}`,
-        subtitle: `${projectName} helps you get results without the complexity. One simple system to plan, track, and improve.`,
-        cta: "Get started free",
-        tagline: `Built for people who care about ${cleaned.toLowerCase()}`,
-        bullets: ["Set up in under 2 minutes", "No credit card required", "Works on any device", "Cancel anytime"],
-      };
-  }
-}
-
 // ── Main generator ──────────────────────────────────────────────────
 export function generateCopy(idea: string, projectName: string): GeneratedCopy {
   const type = detectProductType(idea);
+  const family = getTemplateFamily(type);
 
-  // Check for idea-specific pattern first
-  const pattern = ideaPatterns.find(p => p.match.test(idea));
+  let base: Omit<GeneratedCopy, "howItWorks" | "pricingPlans">;
 
-  const base = pattern
-    ? { headline: pattern.headline, subtitle: pattern.subtitle, cta: pattern.cta, tagline: pattern.tagline, bullets: pattern.bullets }
-    : getGenericCopy(type, idea, projectName);
+  if (type === "growth_tool") {
+    base = buildGrowthEnforcedCopy(idea, projectName, family);
+  } else if (type === "creator_tool") {
+    base = buildCreatorEnforcedCopy(idea, projectName, family);
+  } else if (type === "marketplace") {
+    const rawPattern = ideaPatterns.find((p) => p.match.test(idea));
+    if (rawPattern) {
+      base = {
+        headline: stripDashesFromDisplayText(rawPattern.headline),
+        subtitle: stripDashesFromDisplayText(rawPattern.subtitle),
+        cta: stripDashesFromDisplayText(rawPattern.cta),
+        tagline: stripDashesFromDisplayText(rawPattern.tagline),
+        bullets: rawPattern.bullets.map((b) => stripDashesFromDisplayText(b)),
+      };
+    } else {
+      base = buildFamilyFirstCopy(idea, projectName, family, type);
+    }
+  } else {
+    const rawPattern = ideaPatterns.find((p) => p.match.test(idea));
+    const pattern = rawPattern
+      ? {
+          headline: rawPattern.headline,
+          subtitle: rawPattern.subtitle,
+          cta: rawPattern.cta,
+          tagline: rawPattern.tagline,
+          bullets: rawPattern.bullets.map((b) => stripDashesFromDisplayText(b)),
+        }
+      : undefined;
+
+    base = pattern
+      ? {
+          headline: stripDashesFromDisplayText(pattern.headline),
+          subtitle: stripDashesFromDisplayText(pattern.subtitle),
+          cta: stripDashesFromDisplayText(pattern.cta),
+          tagline: stripDashesFromDisplayText(pattern.tagline),
+          bullets: pattern.bullets,
+        }
+      : buildFamilyFirstCopy(idea, projectName, family, type);
+  }
 
   return {
     ...base,
-    howItWorks: getHowItWorks(type, idea),
-    pricingPlans: getPricingPlans(type),
+    headline: stripDashesFromDisplayText(base.headline),
+    subtitle: stripDashesFromDisplayText(base.subtitle),
+    tagline: stripDashesFromDisplayText(base.tagline),
+    cta: stripDashesFromDisplayText(base.cta),
+    bullets: base.bullets.map((b) => stripDashesFromDisplayText(b)),
+    howItWorks: sanitizeHowItWorks(family.howItWorks),
+    pricingPlans: sanitizePricingPlans(getPricingPlans(type)),
   };
 }

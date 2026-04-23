@@ -2,6 +2,7 @@ import { useState } from "react";
 import { ArrowRight, ArrowLeft, CheckCircle2 } from "lucide-react";
 import { addSurveyResponse } from "@/lib/projectData";
 import { toast } from "sonner";
+import { sanitizeIdeaForPersistence } from "@/lib/mvp/ideaContentSafety";
 
 interface SurveyEditorProps {
   projectName: string;
@@ -14,7 +15,7 @@ interface SurveyQuestion {
 }
 
 export default function SurveyEditor({ projectName }: SurveyEditorProps) {
-  const idea = localStorage.getItem("alize_idea") || projectName;
+  const idea = sanitizeIdeaForPersistence(localStorage.getItem("alize_idea") || "") || projectName;
   const [step, setStep] = useState(0);
   const [answers, setAnswers] = useState<Record<number, string>>({});
   const [completed, setCompleted] = useState(false);

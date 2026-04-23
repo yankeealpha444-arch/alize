@@ -4,12 +4,13 @@ import { setPublished } from "@/lib/projectData";
 import { useProjectId } from "@/hooks/useProject";
 import { toast } from "sonner";
 import { hashAppUrl } from "@/lib/hashRoutes";
+import { sanitizeIdeaForPersistence } from "@/lib/mvp/ideaContentSafety";
 
 const Publish = () => {
   const projectId = useProjectId();
   const [copied, setCopied] = useState<number | null>(null);
   const [published, setPublishedState] = useState(false);
-  const idea = localStorage.getItem("alize_idea") || "My Startup";
+  const idea = sanitizeIdeaForPersistence(localStorage.getItem("alize_idea") || "") || "My Startup";
   const publicMvpUrl = hashAppUrl(`/p/${projectId}`);
   const builderUrl = hashAppUrl(`/builder/${projectId}`);
 

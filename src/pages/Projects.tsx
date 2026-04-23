@@ -1,6 +1,9 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { FolderOpen, TrendingUp, Sparkles, ArrowRight, Clock } from "lucide-react";
+import { generateProjectId } from "@/hooks/useProject";
+import { detectProductType } from "@/lib/productType";
+import { sanitizeIdeaForPersistence } from "@/lib/mvp/ideaContentSafety";
 
 interface ProjectSummary {
   id: string;
@@ -58,7 +61,7 @@ function getAllProjects(): ProjectSummary[] {
   }
 
   if (projects.length === 0) {
-    const idea = localStorage.getItem("alize_idea");
+    const idea = sanitizeIdeaForPersistence(localStorage.getItem("alize_idea") || "");
     const pid = localStorage.getItem("alize_projectId");
     if (idea && pid) {
       projects.push({
@@ -100,10 +103,16 @@ export default function Projects() {
   const handleCreateProject = () => {
     const idea = newIdea.trim();
     if (!idea) return;
-    localStorage.setItem("alize_idea", idea);
-    const pid = idea.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 40) || "my-project";
+    const safe = sanitizeIdeaForPersistence(idea);
+    if (!safe) return;
+    localStorage.setItem("alize_idea", safe);
+    localStorage.removeItem("alize_answers");
+    const pid = generateProjectId(safe);
     localStorage.setItem("alize_projectId", pid);
-    navigate("/questions");
+    localStorage.setItem("alize_projectMode", "growth");
+    localStorage.setItem("alize_productType", detectProductType(safe));
+    localStorage.setItem("alize_includePricing", "false");
+    navigate("/");
   };
 
   return (
@@ -121,7 +130,7 @@ export default function Projects() {
           </div>
           <div>
             <p className="text-sm font-bold text-foreground">New project</p>
-            <p className="text-[10px] text-muted-foreground">Describe your idea and we'll generate an MVP in minutes</p>
+            <p className="text-[10px] text-muted-foreground">Name your project, then upload a video on the next screen</p>
           </div>
         </div>
         <div className="flex gap-3">
@@ -137,7 +146,7 @@ export default function Projects() {
             disabled={!newIdea.trim()}
             className="flex items-center gap-2 bg-foreground text-background px-7 py-3.5 rounded-xl text-sm font-bold hover:opacity-90 transition-opacity disabled:opacity-30 shrink-0"
           >
-            Build MVP <ArrowRight className="w-3.5 h-3.5" />
+            Start video MVP <ArrowRight className="w-3.5 h-3.5" />
           </button>
         </div>
       </div>
@@ -153,7 +162,7 @@ export default function Projects() {
           {projects.map((p) => (
             <div
               key={p.id}
-              onClick={() => navigate(`/dashboard/${p.id}`)}
+              onClick={() => navigate(`/video-mvp/${p.id}`)}
               className="flex items-center gap-4 p-5 rounded-2xl border border-border bg-card hover:bg-secondary/20 hover:shadow-lg cursor-pointer transition-all group"
             >
               <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-secondary to-secondary/40 flex items-center justify-center shrink-0">

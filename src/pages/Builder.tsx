@@ -14,6 +14,7 @@ import ManualEditor from "@/components/builder/ManualEditor";
 import { updateMvpCustomizations, setPublished, addVersion, getMvpCustomizations } from "@/lib/projectData";
 import { hashAppUrl } from "@/lib/hashRoutes";
 import { useProjectId } from "@/hooks/useProject";
+import { sanitizeIdeaForPersistence } from "@/lib/mvp/ideaContentSafety";
 
 type PreviewMode = "desktop" | "tablet" | "mobile";
 
@@ -71,7 +72,7 @@ export default function Builder() {
   const [previewMode, setPreviewMode] = useState<PreviewMode>("desktop");
   const [aiInput, setAiInput] = useState("");
 
-  const idea = localStorage.getItem("alize_idea") || "My Startup Idea";
+  const idea = sanitizeIdeaForPersistence(localStorage.getItem("alize_idea") || "") || "My Startup Idea";
   const projectName = idea.split(" ").slice(0, 4).join(" ");
   const includePricing = localStorage.getItem("alize_includePricing") === "true";
   const shareUrl = hashAppUrl(`/p/${projectId}`);
@@ -90,7 +91,7 @@ export default function Builder() {
       projectId,
     );
     toast.success("MVP is live. Opening your dashboard — next: get users or run Improve MVP.");
-    navigate(`/dashboard/${projectId}`);
+    navigate(`/founder/${projectId}`);
   };
 
   const handlePreviewChanges = () => {

@@ -5,6 +5,21 @@ import type { Database } from './types';
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
+if (import.meta.env.DEV) {
+  let urlHost: string | null = null;
+  try {
+    urlHost = SUPABASE_URL ? new URL(SUPABASE_URL).hostname : null;
+  } catch {
+    urlHost = null;
+  }
+  console.log("[supabase client] env", {
+    VITE_SUPABASE_URL: Boolean(SUPABASE_URL),
+    VITE_SUPABASE_PUBLISHABLE_KEY: Boolean(SUPABASE_PUBLISHABLE_KEY),
+    publishableKeyLength: SUPABASE_PUBLISHABLE_KEY ? String(SUPABASE_PUBLISHABLE_KEY).length : 0,
+    urlHost,
+  });
+}
+
 // Import the supabase client like this:
 // import { supabase } from "@/integrations/supabase/client";
 

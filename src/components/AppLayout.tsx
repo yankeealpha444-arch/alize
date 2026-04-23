@@ -1,28 +1,35 @@
 import { NavLink, Outlet, useParams, useNavigate, useLocation } from "react-router-dom";
 import { hashAppUrl } from "@/lib/hashRoutes";
 import {
-  LayoutDashboard, Eye, GitBranch,
-  Users, Share2, PanelLeftClose, PanelLeft,
-  Monitor, UserCircle, Home, ChevronRight
+  LayoutDashboard,
+  Clapperboard,
+  FlaskConical,
+  Brain,
+  PanelLeftClose, PanelLeft,
+  Monitor, UserCircle, Home, ChevronRight, LogOut,
 } from "lucide-react";
 import { useState } from "react";
+import { sanitizeIdeaForPersistence } from "@/lib/mvp/ideaContentSafety";
+import { useFounderAuth } from "@/context/FounderAuthContext";
 
 const AppLayout = () => {
+  const { signOut } = useFounderAuth();
   const [collapsed, setCollapsed] = useState(false);
   const { projectId } = useParams<{ projectId: string }>();
   const pid = projectId || "default";
   const navigate = useNavigate();
   const location = useLocation();
 
-  const idea = localStorage.getItem("alize_idea") || "My Startup";
+  const idea = sanitizeIdeaForPersistence(localStorage.getItem("alize_idea") || "") || "My Startup";
   const projectName = idea.split(" ").slice(0, 4).join(" ");
 
   // Breadcrumb: figure out current page name
   const pathSegment = location.pathname.split("/")[1] || "dashboard";
   const pageLabels: Record<string, string> = {
-    dashboard: "Dashboard",
-    tests: "Tests & Results",
-    preview: "Preview Changes",
+    dashboard: "Performance dashboard",
+    video: "Video clips",
+    tests: "Insights & loop",
+    preview: "Product",
     versions: "Versions",
     builder: "Edit MVP",
     publish: "Publish & Share",
@@ -32,18 +39,12 @@ const AppLayout = () => {
 
   const navSections = [
     {
-      label: "Loop",
+      label: "Alizé",
       items: [
-        { to: `/dashboard/${pid}`, icon: LayoutDashboard, label: "Dashboard" },
-        { to: `/preview/${pid}`, icon: Eye, label: "Preview Changes" },
-        { to: `/versions/${pid}`, icon: GitBranch, label: "Versions" },
-      ],
-    },
-    {
-      label: "Grow",
-      items: [
-        { to: `/publish/${pid}`, icon: Share2, label: "Publish & Share" },
-        { to: `/get-users/${pid}`, icon: Users, label: "Get Users" },
+        { to: `/video-mvp/${pid}`, icon: Clapperboard, label: "Clips" },
+        { to: `/founder/${pid}`, icon: LayoutDashboard, label: "Performance" },
+        { to: `/tests/${pid}`, icon: FlaskConical, label: "Insights" },
+        { to: "/internal", icon: Brain, label: "AI CEO" },
       ],
     },
   ];
@@ -131,22 +132,33 @@ const AppLayout = () => {
         </nav>
 
         {!collapsed && (
-          <div className="p-3 border-t border-sidebar-border">
+          <div className="p-3 border-t border-sidebar-border space-y-2">
             <div className="text-[10px] text-muted-foreground text-center">Founder Mode · {projectName}</div>
-            <p className="text-[9px] text-muted-foreground/80 text-center mt-2 px-1">
-              Use <span className="text-foreground font-medium">Improve MVP</span> on the dashboard to edit &amp; preview.
+            <p className="text-[9px] text-muted-foreground/80 text-center px-1">
+              Upload a video, pick the best Short, confirm thumbnails, improve the hook, then track performance.
             </p>
+            <button
+              type="button"
+              onClick={() => {
+                void signOut();
+                navigate("/video");
+              }}
+              className="w-full flex items-center justify-center gap-1.5 rounded-md border border-border py-2 text-[10px] font-medium text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+            >
+              <LogOut className="w-3 h-3" />
+              Sign out
+            </button>
           </div>
         )}
       </aside>
 
       {/* Main content */}
-      <main className="flex-1 overflow-y-auto">
+      <main className="flex-1 min-h-0 flex flex-col overflow-y-auto">
         {/* Breadcrumb bar */}
         <div className="px-6 py-2.5 border-b border-border bg-card/50 flex items-center gap-1.5 text-xs text-muted-foreground">
           <button onClick={() => navigate("/projects")} className="hover:text-foreground transition-colors">Alizé</button>
           <ChevronRight className="w-3 h-3" />
-          <button onClick={() => navigate(`/dashboard/${pid}`)} className="hover:text-foreground transition-colors truncate max-w-[150px]">{projectName}</button>
+          <button onClick={() => navigate(`/founder/${pid}`)} className="hover:text-foreground transition-colors truncate max-w-[150px]">{projectName}</button>
           <ChevronRight className="w-3 h-3" />
           <span className="text-foreground font-medium">{currentPageLabel}</span>
         </div>
