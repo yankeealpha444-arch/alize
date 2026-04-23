@@ -1,43 +1,15 @@
-import { useEffect } from "react";
-import { Navigate, Outlet, useLocation } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
-import { useFounderAuth } from "@/context/FounderAuthContext";
+import { type ReactNode } from "react";
+import { Navigate, Outlet } from "react-router-dom";
 
 /**
- * Requires Supabase session + founder allowlist / role. Renders child routes via `<Outlet />`.
+ * Requires temporary founder session flag and renders child routes via `<Outlet />`.
  */
-export default function FounderGate() {
-  const { session, isFounder, loading } = useFounderAuth();
-  const location = useLocation();
-
-  useEffect(() => {
-    if (loading) return;
-    if (session && !isFounder) {
-      void supabase.auth.signOut();
-    }
-  }, [loading, session, isFounder]);
-
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background text-muted-foreground text-sm">
-        Loading…
-      </div>
-    );
+export default function FounderGate({ children }: { children?: ReactNode }) {
+  const isAuthed = localStorage.getItem("alize_founder_session") === "true";
+  console.log("FOUNDER SESSION", localStorage.getItem("alize_founder_session"));
+  if (!isAuthed) {
+    return <Navigate to="/login" replace />;
   }
 
-  if (!session) {
-    return (
-      <Navigate
-        to="/founder-login"
-        replace
-        state={{ from: `${location.pathname}${location.search}` }}
-      />
-    );
-  }
-
-  if (!isFounder) {
-    return <Navigate to="/video" replace />;
-  }
-
-  return <Outlet />;
+  return <>{children ?? <Outlet />}</>;
 }

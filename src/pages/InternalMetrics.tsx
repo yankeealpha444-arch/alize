@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Navigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import {
   getSupabaseTrackingEvents,
   getTrackingEvents,
@@ -7,7 +7,6 @@ import {
 } from "@/lib/trackingEvents";
 import { ensureVideoMvpProjectId } from "@/lib/videoMvpProject";
 import { summarizeFounderLoop } from "@/lib/founderLoopAiCeo";
-import { useFounderAuth } from "@/context/FounderAuthContext";
 
 const CORE_EVENT_TYPES = new Set<TrackingEvent["type"]>([
   "session_started",
@@ -19,7 +18,7 @@ const CORE_EVENT_TYPES = new Set<TrackingEvent["type"]>([
 ]);
 
 export default function InternalMetrics() {
-  const { isFounder } = useFounderAuth();
+  const navigate = useNavigate();
   const [events, setEvents] = useState<TrackingEvent[]>([]);
   const projectId = ensureVideoMvpProjectId();
 
@@ -57,10 +56,6 @@ export default function InternalMetrics() {
     return latest.timestamp;
   }, [founderLoopEvents]);
 
-  if (!isFounder) {
-    return <Navigate to="/video" replace />;
-  }
-
   return (
     <div className="min-h-screen bg-background text-foreground px-4 py-8 sm:px-6 lg:px-8">
       <div className="mx-auto max-w-4xl space-y-6">
@@ -71,6 +66,16 @@ export default function InternalMetrics() {
           <p className="text-sm text-muted-foreground mt-1">
             Last activity: {lastActivity ? new Date(lastActivity).toLocaleString() : "No activity yet"}
           </p>
+          <button
+            type="button"
+            className="mt-3 rounded-md border border-border px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+            onClick={() => {
+              localStorage.removeItem("alize_founder_session");
+              navigate("/");
+            }}
+          >
+            Logout
+          </button>
         </header>
 
         <section className="rounded-xl border border-border/60 bg-card p-4">

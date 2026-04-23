@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { HashRouter, Navigate, Route, Routes, useParams } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useParams } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -47,9 +47,11 @@ export default function App() {
         <TooltipProvider>
           <Toaster />
           <Sonner />
-          <HashRouter>
+          <BrowserRouter>
             <Routes>
               <Route path="/founder-login" element={<FounderLogin />} />
+              <Route path="/login" element={<FounderLogin />} />
+              <Route path="/internal" element={<FounderGate><InternalMetrics /></FounderGate>} />
 
               {/* Primary product: Video MVP (upload → clips → thumbnail → confirm → dashboard) */}
               <Route path="/" element={<Navigate to="/clips" replace />} />
@@ -79,7 +81,6 @@ export default function App() {
               {/* Founder-only: AI CEO, projects, validation, internal metrics, preview changes, builder, etc. */}
               <Route element={<FounderGate />}>
                 <Route path="/projects" element={<Projects />} />
-                <Route path="/internal" element={<InternalMetrics />} />
                 <Route path="/dashboard/:projectId" element={<RedirectDashboardProjectToFounder />} />
                 <Route element={<AppLayout />}>
                   <Route path="/builder/:projectId" element={<Builder />} />
@@ -115,7 +116,7 @@ export default function App() {
 
               <Route path="*" element={<NotFound />} />
             </Routes>
-          </HashRouter>
+          </BrowserRouter>
         </TooltipProvider>
       </FounderAuthProvider>
     </QueryClientProvider>

@@ -8,58 +8,59 @@ import {
   type ReactNode,
 } from "react";
 import type { Session, User } from "@supabase/supabase-js";
-import { supabase } from "@/integrations/supabase/client";
-import { userIsFounder } from "@/lib/founderAuth";
+
+const FOUNDER_SESSION_KEY = "alize_founder_session";
+const FOUNDER_EMAIL = "founder@alize.dev";
+const FOUNDER_PASSWORD = "123456";
 
 export type FounderAuthState = {
   session: Session | null;
   user: User | null;
   loading: boolean;
   isFounder: boolean;
+  signIn: (email: string, password: string) => boolean;
   signOut: () => Promise<void>;
 };
 
 const FounderAuthContext = createContext<FounderAuthState | null>(null);
 
 export function FounderAuthProvider({ children }: { children: ReactNode }) {
-  const [session, setSession] = useState<Session | null>(null);
+  const [isFounder, setIsFounder] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    let mounted = true;
-    supabase.auth.getSession().then(({ data: { session: s } }) => {
-      if (mounted) {
-        setSession(s);
-        setLoading(false);
-      }
-    });
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, s) => {
-      setSession(s);
-    });
-    return () => {
-      mounted = false;
-      subscription.unsubscribe();
-    };
+    const hasSession = localStorage.getItem(FOUNDER_SESSION_KEY) === "true";
+    setIsFounder(hasSession);
+    setLoading(false);
   }, []);
 
-  const user = session?.user ?? null;
-  const isFounder = userIsFounder(user);
+  const signIn = useCallback((email: string, password: string) => {
+    const validEmail = email.trim().toLowerCase() === FOUNDER_EMAIL;
+    const validPassword = password === FOUNDER_PASSWORD;
+    const isValid = validEmail && validPassword;
+    if (isValid) {
+      localStorage.setItem(FOUNDER_SESSION_KEY, "true");
+      setIsFounder(true);
+      return true;
+    }
+    return false;
+  }, []);
 
   const signOut = useCallback(async () => {
-    await supabase.auth.signOut();
+    localStorage.removeItem(FOUNDER_SESSION_KEY);
+    setIsFounder(false);
   }, []);
 
   const value = useMemo(
     () => ({
-      session,
-      user,
+      session: null,
+      user: null,
       loading,
       isFounder,
+      signIn,
       signOut,
     }),
-    [session, user, loading, isFounder, signOut],
+    [loading, isFounder, signIn, signOut],
   );
 
   return <FounderAuthContext.Provider value={value}>{children}</FounderAuthContext.Provider>;
