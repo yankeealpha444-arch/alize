@@ -97,12 +97,10 @@ export default function LinkClipperMvp() {
 
       const pid = ensureVideoMvpProjectId();
 
-      console.log("[clipper][submit]", {
-        submittedUrl: trimmed,
-        projectId: pid,
-      });
+      console.log("[clipper][submit:start]", { pid, trimmed });
 
       const createdJob = await createVideoJobFromSourceUrl(pid, trimmed);
+      console.log("[clipper][submit:created]", createdJob);
 
       localStorage.setItem(`alize_video_job_id_${pid}`, createdJob.id);
       localStorage.setItem(`alize_clips_source_url_${pid}`, trimmed);
@@ -127,18 +125,22 @@ export default function LinkClipperMvp() {
 
       pendingGeneratedTrack.current = true;
       setShouldScrollToResults(true);
-    } catch {
+    } catch (err) {
+      console.error("[clipper][submit:error]", err);
       const pid = ensureVideoMvpProjectId();
 
       void trackEvent("generation_failed", pid, "link_clipper_generation_failed");
 
       setMessage("Could not generate clips from that link. Try another public video URL.");
+    } finally {
       setIsGenerating(false);
     }
   };
 
   const isQueuedOrProcessing = latestJobStatus === "queued" || latestJobStatus === "processing";
-  const displayClips = clips.filter((clip) => Boolean(clip.video_url?.trim()));
+  const displayClips = clips
+    .filter((clip) => !(clip.video_url?.includes("interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4")))
+    .slice(0, 3);
 
   console.log("[clips-render-final]", {
     isGenerating,
@@ -152,6 +154,7 @@ export default function LinkClipperMvp() {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
+        <div className="mb-3 text-xs font-semibold text-amber-700">LIVE FILE: LinkClipperMvp</div>
         <div className="max-w-2xl">
           <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             Alize Clips

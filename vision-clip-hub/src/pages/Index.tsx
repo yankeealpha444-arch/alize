@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link2 } from "lucide-react";
 import { useClips } from "@/hooks/useClips";
+import { demoClips } from "@/data/demoClips";
 import { flowStore } from "@/store/flowStore";
 import { ensureVideoMvpProjectId } from "../../../src/lib/videoMvpProject";
 import { trackEvent } from "../../../src/lib/trackingEvents";
@@ -71,14 +72,17 @@ export default function Index() {
   const realClips = clips
     .filter((clip) => !String(clip.video_url ?? "").includes("interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4"))
     .slice(0, 3);
+  const realPlayableClips = realClips.filter((clip) => Boolean(clip.video_url?.trim()));
 
-  const cards = [0, 1, 2].map((i) => realClips[i] ?? null);
+  const initialPlayableClips = demoClips.slice(0, 3);
+  const cardsSource = realPlayableClips.length > 0 ? realPlayableClips : initialPlayableClips;
+  const cards = [0, 1, 2].map((i) => cardsSource[i] ?? null);
 
   return (
     <div className="min-h-screen bg-background text-foreground">
       <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
         <div className="mb-4 rounded-md border border-emerald-500/50 bg-emerald-500/10 px-3 py-2 text-xs font-semibold tracking-wide text-emerald-700">
-          CORRECT 3 CARD CLIPPER UI ACTIVE
+          LIVE FILE: Index
         </div>
 
         <div className="max-w-2xl">

@@ -43,6 +43,7 @@ export default function VideoClipperMVP({ projectId, ideaSeed, hideDashboardFab 
   return (
     <div className="min-h-screen bg-background text-foreground">
       <div className="max-w-6xl mx-auto px-4 py-10">
+        <div className="mb-3 text-xs font-semibold text-amber-700">LIVE FILE: VideoClipperMVP</div>
         <div className="flex flex-col sm:flex-row sm:items-baseline sm:justify-between gap-2 mb-8 border-b border-border pb-6">
           <p className="text-sm font-semibold tracking-tight text-foreground">Alizé</p>
           <p className="text-xs text-muted-foreground font-medium truncate max-w-full sm:max-w-md text-right">

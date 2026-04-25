@@ -126,6 +126,7 @@ export default function ClipResults() {
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-10 space-y-6">
+      <div className="text-xs font-semibold text-amber-700">LIVE FILE: ClipResults</div>
       <h1 className="text-2xl font-semibold text-foreground">How did your clip do?</h1>
       <p className="text-sm text-muted-foreground">
         Tell us what happened and we&apos;ll suggest what to do next.
