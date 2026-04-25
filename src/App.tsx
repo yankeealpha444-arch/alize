@@ -43,6 +43,7 @@ import ClipperFounderV2 from "@/pages/ClipperFounderV2";
 import LsaFounderV2 from "@/pages/LsaFounderV2";
 import ClipperUserV3 from "@/pages/ClipperUserV3";
 import ClipperUserV4 from "@/pages/ClipperUserV4";
+import ClipperUserV2FeedbackFix from "@/pages/ClipperUserV2FeedbackFix";
 
 const queryClient = new QueryClient();
 
@@ -74,6 +75,7 @@ export default function App() {
               <Route path="/clips-ai-ceo" element={<ClipperAiCeo />} />
               <Route path="/clips-ai-ceo/founder" element={<ClipperAiCeoFounder />} />
               <Route path="/clips-v2" element={<ClipperUserV2 />} />
+              <Route path="/clips-v2-feedback" element={<ClipperUserV2FeedbackFix />} />
               <Route path="/clips-v3" element={<ClipperUserV3 />} />
               <Route path="/clips-v4" element={<ClipperUserV4 />} />
               <Route path="/clips-v2/founder" element={<ClipperFounderV2 />} />
