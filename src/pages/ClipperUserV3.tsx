@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { trackEvent } from "@/lib/trackingEvents";
 import { ensureVideoMvpProjectId } from "@/lib/videoMvpProject";
 import { createVideoJobFromSourceUrl, fetchClipperState, type VideoClipRow, type VideoJobStatus } from "@/lib/mvp/videoClipperBackend";
@@ -60,9 +60,34 @@ export default function ClipperUserV3() {
   const [viewedIds, setViewedIds] = useState<Record<string, true>>({});
   const [feedbackByClipId, setFeedbackByClipId] = useState<Record<string, FeedbackState>>({});
   const projectId = ensureVideoMvpProjectId();
+  const pollStartedAtRef = useRef<number | null>(null);
+  const POLL_TIMEOUT_MS = 45000;
 
   useEffect(() => {
     void trackEvent("page_view", projectId, "clips_v3");
+  }, [projectId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadInitialPlayable = async () => {
+      try {
+        const state = await fetchClipperState(projectId, null, { cacheBuster: Date.now() });
+        if (cancelled) return;
+        const playableRows = toClipRows(state.clips);
+        console.log("[clips-v3] playable rows", { source: "initial", count: playableRows.length });
+        if (playableRows.length > 0) {
+          setClips(playableRows);
+          setPreviousPlayableClips(playableRows);
+          setMessage("");
+        }
+      } catch {
+        // Keep UI stable without forcing an error banner on first load.
+      }
+    };
+    void loadInitialPlayable();
+    return () => {
+      cancelled = true;
+    };
   }, [projectId]);
 
   useEffect(() => {
@@ -73,31 +98,66 @@ export default function ClipperUserV3() {
         const state = await fetchClipperState(projectId, activeJobId, { cacheBuster: Date.now() });
         if (cancelled) return;
         const status = state.latestJob?.status ?? null;
+        console.log("[clips-v3] poll status", { jobId: activeJobId, status });
         setActiveJobStatus(status);
         const playableRows = toClipRows(state.clips);
+        console.log("[clips-v3] playable rows", { jobId: activeJobId, count: playableRows.length });
         if (playableRows.length > 0) {
           setClips(playableRows);
+          setPreviousPlayableClips(playableRows);
           setMessage("");
+        }
+        const pollStartedAt = pollStartedAtRef.current;
+        const timedOut =
+          Boolean(pollStartedAt) &&
+          (status === "queued" || status === "processing") &&
+          playableRows.length === 0 &&
+          Date.now() - (pollStartedAt ?? 0) > POLL_TIMEOUT_MS;
+        if (timedOut) {
+          setMessage("That video could not be processed. Showing previous clips.");
+          setClips(previousPlayableClips);
+          console.log("[clips-v3] restored previous clips", { reason: "timeout", count: previousPlayableClips.length });
+          setIsLoading(false);
+          setActiveJobId(null);
+          setActiveJobStatus(null);
+          pollStartedAtRef.current = null;
+          return;
         }
         if (status === "failed") {
           setMessage("New job failed. Showing previous clips.");
           setClips(previousPlayableClips);
+          console.log("[clips-v3] restored previous clips", { reason: "failed", count: previousPlayableClips.length });
           setIsLoading(false);
+          setActiveJobId(null);
+          setActiveJobStatus(null);
+          pollStartedAtRef.current = null;
           return;
         }
         if (status === "completed" && playableRows.length === 0) {
           setMessage("No clips yet.");
+          setClips(previousPlayableClips);
+          console.log("[clips-v3] restored previous clips", { reason: "completed-no-playable", count: previousPlayableClips.length });
           setIsLoading(false);
+          setActiveJobId(null);
+          setActiveJobStatus(null);
+          pollStartedAtRef.current = null;
           return;
         }
         if (status === "completed" && playableRows.length > 0) {
           setIsLoading(false);
+          setActiveJobId(null);
+          setActiveJobStatus(null);
+          pollStartedAtRef.current = null;
         }
       } catch {
         if (!cancelled) {
           setMessage("Failed to poll new job.");
           setClips(previousPlayableClips);
+          console.log("[clips-v3] restored previous clips", { reason: "poll-error", count: previousPlayableClips.length });
           setIsLoading(false);
+          setActiveJobId(null);
+          setActiveJobStatus(null);
+          pollStartedAtRef.current = null;
         }
       }
     };
@@ -152,12 +212,13 @@ export default function ClipperUserV3() {
 
     try {
       const createdJob = await createVideoJobFromSourceUrl(projectId, trimmed);
+      console.log("[clips-v3] created job", { jobId: createdJob.id, status: createdJob.status });
       setPreviousPlayableClips(clips);
-      setClips([]);
       setFeedbackByClipId({});
       setViewedIds({});
       setActiveJobId(createdJob.id);
       setActiveJobStatus(createdJob.status);
+      pollStartedAtRef.current = Date.now();
       setMessage("Generating clips for new link...");
     } catch {
       setMessage("Failed to start generation.");
