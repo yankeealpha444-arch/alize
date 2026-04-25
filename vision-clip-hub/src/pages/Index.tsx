@@ -127,7 +127,8 @@ export default function Index() {
             {cards.map((clip, idx) => {
               const label = `Clip ${idx + 1}`;
               const directUrl = clip?.video_url?.trim() ?? "";
-              const canDownload = Boolean(directUrl);
+              const isFlowerDemoUrl = directUrl.includes("interactive-examples.mdn.mozilla.net");
+              const canDownload = Boolean(directUrl) && !isFlowerDemoUrl;
               const startSec = Math.max(0, Math.floor(Number(clip?.start_time) || 0));
               const endSec = Math.max(startSec, Math.floor(Number(clip?.end_time) || 0));
               const durationSec = Math.max(0, endSec - startSec);
@@ -150,14 +151,14 @@ export default function Index() {
                   <div className="mt-3">
                     {canDownload ? (
                       <a
-                        href={directUrl}
-                        download={`clip-${idx + 1}.mp4`}
+                        href={clip?.video_url ?? directUrl}
+                        download={`alize-clip-${idx + 1}.mp4`}
                         className="inline-flex items-center rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-secondary"
                       >
                         Download MP4
                       </a>
                     ) : (
-                      <span className="text-xs text-muted-foreground">Processing download...</span>
+                      <span className="text-xs text-muted-foreground">Clip still processing</span>
                     )}
                   </div>
                 </article>
