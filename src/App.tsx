@@ -32,6 +32,7 @@ import PreviewPage from "@/pages/PreviewPage";
 import VideoMVP from "@/pages/VideoMVP";
 import DashboardPage from "@/pages/DashboardPage";
 import FounderLogin from "@/pages/FounderLogin";
+import ClipperClean from "@/pages/ClipperClean";
 
 const queryClient = new QueryClient();
 
@@ -56,6 +57,7 @@ export default function App() {
               {/* Primary product: Video MVP (upload → clips → thumbnail → confirm → dashboard) */}
               <Route path="/" element={<Navigate to="/clips" replace />} />
               <Route path="/clips" element={<ClipSelectionPage />} />
+              <Route path="/clips-clean" element={<ClipperClean />} />
               <Route path="/thumbnail" element={<ThumbnailSelectionPage />} />
               <Route path="/preview" element={<PreviewPage />} />
               <Route path="/video" element={<VideoMVP />} />
