@@ -62,6 +62,9 @@ export type TrackingEventType =
   | "clip_viewed"
   | "clip_downloaded"
   | "generation_failed"
+  | "generation_started"
+  | "clip_feedback_good"
+  | "clip_feedback_bad"
   | "continue_to_results"
   | "results_started"
   | "outcome_selected"
@@ -153,6 +156,9 @@ const TRACKED_EVENT_NAMES: ReadonlySet<string> = new Set([
   "clip_viewed",
   "clip_downloaded",
   "generation_failed",
+  "generation_started",
+  "clip_feedback_good",
+  "clip_feedback_bad",
   "continue_to_results",
   "results_started",
   "outcome_selected",
@@ -181,18 +187,31 @@ function getSessionId(): string {
   return sid;
 }
 
-function normalizeProjectId(projectId: string | number): number | null {
-  if (typeof projectId === "number") {
-    return Number.isFinite(projectId) ? projectId : null;
-  }
+type ProjectIdResolution = {
+  numericProjectId: number | null;
+  projectIdText: string;
+  usedUuidFallback: boolean;
+};
 
-  const numericProjectId = Number(projectId);
-  return Number.isFinite(numericProjectId) ? numericProjectId : null;
+function resolveProjectId(projectId: string | number): ProjectIdResolution | null {
+  const projectIdText = String(projectId).trim();
+  if (!projectIdText) return null;
+  if (typeof projectId === "number") {
+    return {
+      numericProjectId: Number.isFinite(projectId) ? projectId : null,
+      projectIdText,
+      usedUuidFallback: !Number.isFinite(projectId),
+    };
+  }
+  const numericProjectId = Number(projectIdText);
+  if (Number.isFinite(numericProjectId) && projectIdText === String(numericProjectId)) {
+    return { numericProjectId, projectIdText, usedUuidFallback: false };
+  }
+  return { numericProjectId: null, projectIdText, usedUuidFallback: true };
 }
 
 /**
  * Persists to localStorage and best-effort Supabase `public.events`.
- * Database expects numeric bigint `project_id`.
  */
 export async function trackEvent(
   type: TrackingEventType,
@@ -213,9 +232,9 @@ export async function trackEvent(
     existing.push(event);
     localStorage.setItem(key, JSON.stringify(existing));
 
-    const numericProjectId = normalizeProjectId(projectId);
+    const projectResolution = resolveProjectId(projectId);
 
-    if (numericProjectId === null) {
+    if (projectResolution === null) {
       console.error("Invalid projectId for events insert", { projectId, type, label, extraMeta });
       return;
     }
@@ -224,38 +243,66 @@ export async function trackEvent(
       from: (table: string) => {
         insert: (
           row: Record<string, unknown>
-        ) => Promise<{ error: { message?: string } | null }>;
+        ) => Promise<{ data?: unknown; error: { message?: string } | null }>;
       };
     };
 
+    const pagePath =
+      typeof window !== "undefined" && window.location
+        ? `${window.location.pathname}${window.location.search}`
+        : null;
+    const eventMetadata = metadataForEventsInsert(label, event.sessionId, {
+      ...(extraMeta && typeof extraMeta === "object" ? extraMeta : {}),
+      projectId: projectResolution.projectIdText,
+    });
+    const eventMeta = {
+      ...eventMetadata,
+      projectId: projectResolution.projectIdText,
+    };
     const insertRow = {
-      project_id: numericProjectId,
+      project_id: projectResolution.numericProjectId,
+      output_id: null,
+      session_id: event.sessionId,
+      visitor_id: event.sessionId,
+      event_type: type,
       event_name: type,
-      metadata: metadataForEventsInsert(label, event.sessionId, extraMeta),
+      page_path: pagePath,
+      element_key: label ?? null,
+      event_value: label ?? null,
+      meta: eventMeta,
+      occurred_at: event.timestamp,
+      type,
+      page: pagePath,
+      metadata: eventMetadata,
     };
 
-    if (import.meta.env.DEV) {
-      console.log("[trackEvent] supabase insert payload", JSON.stringify(insertRow, null, 2));
-    }
+    console.log("[trackEvent] inserting event", type, {
+      resolvedProjectId: projectResolution.numericProjectId,
+      usedUuidFallback: projectResolution.usedUuidFallback,
+      originalProjectId: projectResolution.projectIdText,
+    });
+    console.log("[trackEvent] supabase insert payload", insertRow);
 
-    const { error } = await sb.from("events").insert(insertRow);
+    const response = await sb.from("events").insert(insertRow);
+    console.log("[trackEvent] supabase insert response data", response.data ?? null);
+    console.log("[trackEvent] supabase insert response error", response.error ?? null);
 
-    if (error) {
+    if (response.error) {
       console.error("trackEvent supabase insert error:", {
-        message: error.message,
-        code: (error as { code?: string }).code,
-        details: (error as { details?: string }).details,
-        hint: (error as { hint?: string }).hint,
-        raw: error,
+        message: response.error.message,
+        code: (response.error as { code?: string }).code,
+        details: (response.error as { details?: string }).details,
+        hint: (response.error as { hint?: string }).hint,
+        raw: response.error,
       });
     }
 
     if (typeof window !== "undefined") {
       window.dispatchEvent(
-        new CustomEvent("alize-tracking-updated", { detail: { projectId: numericProjectId } })
+        new CustomEvent("alize-tracking-updated", { detail: { projectId: projectResolution.projectIdText } })
       );
       window.dispatchEvent(
-        new CustomEvent("alize-mvp-tracking-updated", { detail: { projectId: numericProjectId } })
+        new CustomEvent("alize-mvp-tracking-updated", { detail: { projectId: projectResolution.projectIdText } })
       );
     }
   } catch (err) {
@@ -275,15 +322,15 @@ export async function getSupabaseTrackingEvents(
   projectId: string | number = "default"
 ): Promise<TrackingEvent[]> {
   try {
-    const numericProjectId = normalizeProjectId(projectId);
-    if (numericProjectId === null) return [];
+    const projectResolution = resolveProjectId(projectId);
+    if (projectResolution === null) return [];
 
     const sb = supabase as unknown as {
       from: (table: string) => {
         select: (
           cols: string
         ) => {
-          eq: (col: string, value: number) => Promise<{
+          eq: (col: string, value: string | number) => Promise<{
             data: Array<Record<string, unknown>> | null;
             error: { message?: string } | null;
           }>;
@@ -291,24 +338,83 @@ export async function getSupabaseTrackingEvents(
       };
     };
 
-    const { data, error } = await sb
-      .from("events")
-      .select("event_name, metadata, created_at")
-      .eq("project_id", numericProjectId);
+    let data: Array<Record<string, unknown>> | null = null;
+    let error: { message?: string } | null = null;
+    if (projectResolution.numericProjectId !== null) {
+      const res = await sb
+        .from("events")
+        .select("event_name, event_type, metadata, meta, session_id, created_at, occurred_at")
+        .eq("project_id", projectResolution.numericProjectId);
+      data = res.data;
+      error = res.error;
+    } else {
+      const sbAny = supabase as unknown as {
+        from: (table: string) => {
+          select: (cols: string) => {
+            contains: (
+              col: string,
+              value: Record<string, unknown>
+            ) => Promise<{
+              data: Array<Record<string, unknown>> | null;
+              error: { message?: string } | null;
+            }>;
+          };
+        };
+      };
+      const [metadataRes, metaRes] = await Promise.all([
+        sbAny
+          .from("events")
+          .select("event_name, event_type, metadata, meta, session_id, created_at, occurred_at")
+          .contains("metadata", { projectId: projectResolution.projectIdText }),
+        sbAny
+          .from("events")
+          .select("event_name, event_type, metadata, meta, session_id, created_at, occurred_at")
+          .contains("meta", { projectId: projectResolution.projectIdText }),
+      ]);
+      if (metadataRes.error) {
+        error = metadataRes.error;
+      } else if (metaRes.error) {
+        error = metaRes.error;
+      } else {
+        const merged = [...(metadataRes.data ?? []), ...(metaRes.data ?? [])];
+        const seen = new Set<string>();
+        data = merged.filter((row) => {
+          const key = JSON.stringify([
+            row.event_name ?? row.event_type ?? "",
+            row.session_id ?? "",
+            row.occurred_at ?? row.created_at ?? "",
+            JSON.stringify(row.metadata ?? row.meta ?? {}),
+          ]);
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+      }
+    }
 
     if (error || !data) return [];
 
     const rows: TrackingEvent[] = [];
     for (const r of data) {
-      const eventName = String(r.event_name ?? "");
+      const eventName = String(r.event_name ?? r.event_type ?? "");
       if (!TRACKED_EVENT_NAMES.has(eventName)) continue;
 
-      const metadata = (r.metadata ?? {}) as Record<string, unknown>;
+      const metadata = (r.metadata ?? r.meta ?? {}) as Record<string, unknown>;
       rows.push({
         type: eventName as TrackingEventType,
         label: typeof metadata.label === "string" ? metadata.label : undefined,
-        timestamp: typeof r.created_at === "string" ? r.created_at : new Date().toISOString(),
-        sessionId: typeof metadata.sessionId === "string" ? metadata.sessionId : "supabase",
+        timestamp:
+          typeof r.occurred_at === "string"
+            ? r.occurred_at
+            : typeof r.created_at === "string"
+              ? r.created_at
+              : new Date().toISOString(),
+        sessionId:
+          typeof r.session_id === "string"
+            ? r.session_id
+            : typeof metadata.sessionId === "string"
+              ? metadata.sessionId
+              : "supabase",
       });
     }
 

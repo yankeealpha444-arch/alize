@@ -36,6 +36,8 @@ import ClipperClean from "@/pages/ClipperClean";
 import ClipperCleanV2 from "@/pages/ClipperCleanV2";
 import ClipperCleanV3 from "@/pages/ClipperCleanV3";
 import ClipperAICEOV1 from "@/pages/ClipperAICEOV1";
+import ClipperAiCeo from "@/pages/ClipperAiCeo";
+import ClipperAiCeoFounder from "@/pages/ClipperAiCeoFounder";
 
 const queryClient = new QueryClient();
 
@@ -64,6 +66,8 @@ export default function App() {
               <Route path="/clips-clean-v2" element={<ClipperCleanV2 />} />
               <Route path="/clips-clean-v3" element={<ClipperCleanV3 />} />
               <Route path="/clips-ai-ceo-v1" element={<ClipperAICEOV1 />} />
+              <Route path="/clips-ai-ceo" element={<ClipperAiCeo />} />
+              <Route path="/clips-ai-ceo/founder" element={<ClipperAiCeoFounder />} />
               <Route path="/thumbnail" element={<ThumbnailSelectionPage />} />
               <Route path="/preview" element={<PreviewPage />} />
               <Route path="/video" element={<VideoMVP />} />

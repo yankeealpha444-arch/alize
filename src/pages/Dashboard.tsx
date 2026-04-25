@@ -1,3 +1,9 @@
+// AI SAFE FILE
+// UI LOCKED
+// DO NOT MODIFY LAYOUT, STYLE, STRUCTURE, ROUTES, COPY, OR TEMPLATE
+// ONLY FIX THE SPECIFIC REQUESTED LOGIC
+// UI changes require: "UI change approved"
+
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowDownRight, ArrowRight, Minus, TrendingUp } from "lucide-react";
@@ -12,24 +18,34 @@ function countNamed(events: TrackingEvent[], type: TrackingEvent["type"]): numbe
   return events.filter((e) => e.type === type).length;
 }
 
+function countAny(events: TrackingEvent[], names: string[]): number {
+  const nameSet = new Set(names);
+  return events.filter((e) => nameSet.has(String(e.type))).length;
+}
+
 function growthVelocityLabel(events: TrackingEvent[]): "improving" | "flat" | "declining" {
-  const weights: Partial<Record<TrackingEvent["type"], number>> = {
+  const weights: Record<string, number> = {
     play_clicked: 1,
+    clip_viewed: 1,
     clip_selected: 1.2,
     thumbnail_confirmed: 2,
     use_clicked: 1.5,
     completed_flow: 2.5,
     download_clicked: 0.8,
+    clip_downloaded: 0.8,
+    clip_feedback: 0.8,
+    generation_started: 0.6,
+    processing_started: 0.6,
   };
   const scored = events
-    .filter((e) => weights[e.type] != null)
+    .filter((e) => weights[String(e.type)] != null)
     .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
   if (scored.length < 4) return "flat";
   const mid = Math.floor(scored.length / 2) || 1;
   const early = scored.slice(0, mid);
   const late = scored.slice(mid);
   const sum = (arr: TrackingEvent[]) =>
-    arr.reduce((acc, e) => acc + (weights[e.type] ?? 0), 0);
+    arr.reduce((acc, e) => acc + (weights[String(e.type)] ?? 0), 0);
   const s0 = sum(early);
   const s1 = sum(late);
   if (s1 > s0 * 1.15) return "improving";
@@ -88,16 +104,24 @@ const Dashboard = () => {
   const events = supabaseEvents ?? getTrackingEvents(projectId);
 
   const metrics = useMemo(() => {
-    const uploads = countNamed(events, "upload_started");
-    const plays = countNamed(events, "play_clicked");
+    const uploads = countAny(events, ["upload_started", "generation_started", "processing_started"]);
+    const plays = countAny(events, ["play_clicked", "clip_played", "clip_viewed"]);
     const clipSel = countNamed(events, "clip_selected");
     const thumbSel = countNamed(events, "thumbnail_selected");
     const thumbConf = countNamed(events, "thumbnail_confirmed");
     const uses = countNamed(events, "use_clicked");
-    const downloads = countNamed(events, "download_clicked");
-    const feedback = countNamed(events, "result_feedback");
+    const downloads = countAny(events, ["download_clicked", "clip_downloaded"]);
+    const feedback = countAny(events, ["result_feedback", "clip_feedback", "clip_result", "clip_feedback_good", "clip_feedback_bad"]);
     const completed = countNamed(events, "completed_flow");
     const aiFollows = countNamed(events, "ai_follow");
+    const visitors = countNamed(events, "page_view");
+    const activation = countAny(events, ["link_submitted", "generation_started", "processing_started"]);
+    const engagement = plays;
+    const value = downloads;
+
+    const dataPoints = visitors + activation + engagement + value;
+    const signalLabel: "Test" | "Hypothesis" | "Validated" =
+      dataPoints >= 40 ? "Validated" : dataPoints >= 12 ? "Hypothesis" : "Test";
 
     let channelStatus: "No data yet" | "Early clips" | "Momentum up" | "Strong momentum" | "Full loop streak" =
       "No data yet";
@@ -149,6 +173,11 @@ const Dashboard = () => {
       feedback,
       completed,
       aiFollows,
+      visitors,
+      activation,
+      engagement,
+      value,
+      signalLabel,
       channelStatus,
       velocity,
       channelMomentum,
@@ -236,6 +265,13 @@ const Dashboard = () => {
           >
             Open Builder
           </button>
+          <button
+            type="button"
+            onClick={() => navigate(`/versions/${projectId}`)}
+            className="rounded-full border border-border bg-background px-5 py-2 text-sm font-semibold text-foreground hover:bg-muted"
+          >
+            Open Versions
+          </button>
         </div>
       </section>
 
@@ -254,6 +290,7 @@ const Dashboard = () => {
           <p className="text-xs text-muted-foreground mt-2">
             Uploads {metrics.uploads} · Confirms {metrics.thumbConf} · Completed flows {metrics.completed}
           </p>
+          <p className="text-xs text-muted-foreground mt-1">Signal label: {metrics.signalLabel}</p>
         </section>
         <section className="rounded-xl border border-border bg-card p-5">
           <h3 className="text-xs font-bold uppercase tracking-widest text-muted-foreground">2. Growth velocity</h3>
@@ -285,20 +322,20 @@ const Dashboard = () => {
         <h3 className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-3">Clip & thumbnail signals</h3>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
           <div>
-            <p className="text-muted-foreground">Plays</p>
-            <p className="text-lg font-semibold text-foreground">{metrics.plays}</p>
+            <p className="text-muted-foreground">Visitors</p>
+            <p className="text-lg font-semibold text-foreground">{metrics.visitors}</p>
           </div>
           <div>
-            <p className="text-muted-foreground">Clip selects</p>
-            <p className="text-lg font-semibold text-foreground">{metrics.clipSel}</p>
+            <p className="text-muted-foreground">Activation</p>
+            <p className="text-lg font-semibold text-foreground">{metrics.activation}</p>
           </div>
           <div>
-            <p className="text-muted-foreground">Thumbnail picks</p>
-            <p className="text-lg font-semibold text-foreground">{metrics.thumbSel}</p>
+            <p className="text-muted-foreground">Engagement</p>
+            <p className="text-lg font-semibold text-foreground">{metrics.engagement}</p>
           </div>
           <div>
-            <p className="text-muted-foreground">Downloads</p>
-            <p className="text-lg font-semibold text-foreground">{metrics.downloads}</p>
+            <p className="text-muted-foreground">Value</p>
+            <p className="text-lg font-semibold text-foreground">{metrics.value}</p>
           </div>
         </div>
       </div>
