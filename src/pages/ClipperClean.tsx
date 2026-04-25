@@ -100,6 +100,7 @@ export default function ClipperClean() {
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {clips.map((clip, idx) => {
                 const directUrl = (clip.video_url ?? "").trim();
+                const hasVideoUrl = directUrl.length > 0;
                 const start = Math.max(0, Math.floor(Number(clip.start_time_sec) || 0));
                 const end = Math.max(start, Math.floor(Number(clip.end_time_sec) || 0));
                 return (
@@ -107,6 +108,21 @@ export default function ClipperClean() {
                     <p className="text-sm font-semibold">{`Clip ${idx + 1}`}</p>
                     <div className="mt-2 aspect-video overflow-hidden rounded-lg border border-border/60 bg-black">
                       <video src={directUrl} controls playsInline preload="metadata" className="h-full w-full object-cover" />
+                    </div>
+                    <div className="mt-3">
+                      {hasVideoUrl ? (
+                        <a
+                          href={clip.video_url ?? directUrl}
+                          download={`alize-clip-${idx + 1}.mp4`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-secondary"
+                        >
+                          Download MP4
+                        </a>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">Clip still processing</span>
+                      )}
                     </div>
                     <p className="mt-2 text-xs text-muted-foreground">
                       Start: {formatTime(start)} · End: {formatTime(end)}
