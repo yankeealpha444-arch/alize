@@ -6,6 +6,7 @@ import { flowStore } from "@/store/flowStore";
 import { ensureVideoMvpProjectId } from "../../../src/lib/videoMvpProject";
 import { parseYoutubeVideoId } from "../../../src/lib/mvp/youtubeIngest";
 import { trackEvent } from "../../../src/lib/trackingEvents";
+import { createVideoJobFromSourceUrl } from "../../../src/lib/mvp/videoClipperBackend";
 
 function buildYoutubeEmbedSrc(videoId: string, startTime: number, endTime: number): string {
   return `https://www.youtube.com/embed/${videoId}?start=${Math.floor(startTime)}&end=${Math.ceil(endTime)}&rel=0&modestbranding=1`;
@@ -24,7 +25,8 @@ function isValidPublicVideoUrl(value: string): boolean {
 
 export default function LinkClipperMvp() {
   const queryClient = useQueryClient();
-  const { clips, isLoading } = useClips();
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const { clips, isLoading, latestJobStatus } = useClips(activeJobId, false, true);
   const [link, setLink] = useState(flowStore.get().sourceInput ?? "");
   const [message, setMessage] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
@@ -37,6 +39,10 @@ export default function LinkClipperMvp() {
     const projectId = ensureVideoMvpProjectId();
     void trackEvent("session_started", projectId, "link_clipper_session");
   }, []);
+
+  useEffect(() => {
+    console.log("[clipper][render] activeJobId", activeJobId);
+  }, [activeJobId]);
 
   useEffect(() => {
     if (!shouldScrollToResults || isLoading || clips.length === 0) return;
@@ -62,10 +68,22 @@ export default function LinkClipperMvp() {
       setMessage("");
       flowStore.setSource(trimmed);
       const pid = ensureVideoMvpProjectId();
+      console.log("[clipper][submit]", {
+        submittedUrl: trimmed,
+        projectId: pid,
+      });
+      const createdJob = await createVideoJobFromSourceUrl(pid, trimmed);
+      localStorage.setItem(`alize_video_job_id_${pid}`, createdJob.id);
+      setActiveJobId(createdJob.id);
+      console.log("[clipper][submit]", {
+        createdJobId: createdJob.id,
+        source_url: createdJob.source_url ?? trimmed,
+        projectId: pid,
+      });
       void trackEvent("link_submitted", pid, "link_clipper_submit", { source_url: trimmed });
       localStorage.setItem(`alize_clips_source_url_${pid}`, trimmed);
-      await queryClient.invalidateQueries({ queryKey: ["clips"] });
-      await queryClient.refetchQueries({ queryKey: ["clips"], type: "active" });
+      await queryClient.invalidateQueries({ queryKey: ["clips", pid] });
+      await queryClient.refetchQueries({ queryKey: ["clips", pid, createdJob.id], type: "active" });
       pendingGeneratedTrack.current = true;
       setShouldScrollToResults(true);
     } catch {
@@ -76,6 +94,16 @@ export default function LinkClipperMvp() {
       setIsGenerating(false);
     }
   };
+
+  const isQueuedOrProcessing = latestJobStatus === "queued" || latestJobStatus === "processing";
+  const displayClips = clips;
+
+  console.log("[clips-render]", {
+    activeJobId,
+    clipsLength: clips.length,
+    clipJobIds: clips.map((c) => c.job_id),
+    videoUrls: clips.map((c) => c.video_url),
+  });
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -117,21 +145,29 @@ export default function LinkClipperMvp() {
         </section>
 
         <section ref={resultsRef} className="mt-8">
-          {isLoading ? (
+          {isQueuedOrProcessing ? (
             <p className="text-sm text-muted-foreground">Generating clips...</p>
-          ) : clips.length === 0 ? (
+          ) : null}
+          {displayClips.length === 0 && !isQueuedOrProcessing && !isGenerating ? (
             <p className="text-sm text-muted-foreground">No clips yet. Paste a video link to get started.</p>
           ) : (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {clips.map((clip, idx) => {
+              {displayClips.map((clip, idx) => {
                 const directUrl = clip.video_url?.trim() ?? "";
-                const ytId = clip.youtube_video_id?.trim() || parseYoutubeVideoId(directUrl) || "";
-                const isYoutube = Boolean(ytId);
+                const ytId = !directUrl ? clip.youtube_video_id?.trim() || "" : "";
+                const isYoutube = !directUrl && Boolean(ytId);
                 const canDownload = Boolean(directUrl) && !isYoutube;
                 const label = `Clip ${idx + 1}`;
-                const embedSrc = isYoutube
-                  ? buildYoutubeEmbedSrc(ytId, clip.start_time, clip.end_time)
-                  : "";
+                const embedSrc = isYoutube ? buildYoutubeEmbedSrc(ytId, clip.start_time, clip.end_time) : "";
+                const startSec = Math.max(0, Math.floor(Number(clip.start_time) || 0));
+                const endSec = Math.max(startSec, Math.floor(Number(clip.end_time) || 0));
+                const durationSec = Math.max(0, endSec - startSec);
+                console.log("[clipper][render] clip", {
+                  activeJobId,
+                  clipId: clip.id,
+                  video_url: directUrl || null,
+                  youtube_video_id: clip.youtube_video_id ?? null,
+                });
                 return (
                   <article key={clip.id} className="rounded-xl border border-border/60 bg-card p-3">
                     <p className="text-sm font-semibold">{label}</p>
@@ -169,6 +205,18 @@ export default function LinkClipperMvp() {
                         </div>
                       )}
                     </div>
+                    {isYoutube ? (
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        This video owner has disabled playback on other websites. Open on YouTube or try another link.
+                      </p>
+                    ) : null}
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      Start: {startSec}s
+                      {" · "}
+                      End: {endSec}s
+                      {" · "}
+                      Duration: {durationSec}s
+                    </p>
 
                     <div className="mt-3 flex gap-2">
                       {canDownload ? (
