@@ -1,1 +1,1 @@
-export { default } from "../../vision-clip-hub/src/pages/LinkClipperMvp";
+export { default } from "../../vision-clip-hub/src/pages/Index";
