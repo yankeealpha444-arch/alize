@@ -44,6 +44,14 @@ import LsaFounderV2 from "@/pages/LsaFounderV2";
 import ClipperUserV3 from "@/pages/ClipperUserV3";
 import ClipperUserV4 from "@/pages/ClipperUserV4";
 import ClipperUserV2FeedbackFix from "@/pages/ClipperUserV2FeedbackFix";
+import ClipperDebugV3 from "@/pages/ClipperDebugV3";
+import ClipsCleanV3Locked from "@/pages/ClipsCleanV3Locked";
+import ClipsCleanV3Download from "@/pages/ClipsCleanV3Download";
+import ClipsCleanV3NewVideo from "@/pages/ClipsCleanV3NewVideo";
+import ClipsCleanV3GenerateJob from "@/pages/ClipsCleanV3GenerateJob";
+import ClipsCleanV3NoLandingVideos from "@/pages/ClipsCleanV3NoLandingVideos";
+import ClipsCleanV3LinkedVideo from "@/pages/ClipsCleanV3LinkedVideo";
+import ClipsCleanV4Clean from "@/pages/ClipsCleanV4Clean";
 
 const queryClient = new QueryClient();
 
@@ -71,11 +79,19 @@ export default function App() {
               <Route path="/clips-clean" element={<ClipperClean />} />
               <Route path="/clips-clean-v2" element={<ClipperCleanV2 />} />
               <Route path="/clips-clean-v3" element={<ClipperCleanV3 />} />
+              <Route path="/clips-clean-v3-locked" element={<ClipsCleanV3Locked />} />
+              <Route path="/clips-clean-v3-download" element={<ClipsCleanV3Download />} />
+              <Route path="/clips-clean-v3-new-video" element={<ClipsCleanV3NewVideo />} />
+              <Route path="/clips-clean-v3-generate-job" element={<ClipsCleanV3GenerateJob />} />
+              <Route path="/clips-clean-v3-no-landing-videos" element={<ClipsCleanV3NoLandingVideos />} />
+              <Route path="/clips-clean-v3-linked-video" element={<ClipsCleanV3LinkedVideo />} />
+              <Route path="/clips-clean-v4-clean" element={<ClipsCleanV4Clean />} />
               <Route path="/clips-ai-ceo-v1" element={<ClipperAICEOV1 />} />
               <Route path="/clips-ai-ceo" element={<ClipperAiCeo />} />
               <Route path="/clips-ai-ceo/founder" element={<ClipperAiCeoFounder />} />
               <Route path="/clips-v2" element={<ClipperUserV2 />} />
               <Route path="/clips-v2-feedback" element={<ClipperUserV2FeedbackFix />} />
+              <Route path="/clips-debug" element={<ClipperDebugV3 />} />
               <Route path="/clips-v3" element={<ClipperUserV3 />} />
               <Route path="/clips-v4" element={<ClipperUserV4 />} />
               <Route path="/clips-v2/founder" element={<ClipperFounderV2 />} />

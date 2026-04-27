@@ -22,11 +22,21 @@ export type FounderLoopSummary = {
   suggestedExperiment: string;
 };
 
+export type FounderLoopInputs = {
+  weakestFunnelStep?: "links" | "generated" | "played" | "downloaded" | null;
+  failureRate?: number;
+  valueRate?: number;
+  returnRate?: number;
+};
+
 function count(events: TrackingEvent[], type: TrackingEvent["type"]): number {
   return events.filter((e) => e.type === type).length;
 }
 
-export function summarizeFounderLoop(events: TrackingEvent[]): FounderLoopSummary {
+export function summarizeFounderLoop(
+  events: TrackingEvent[],
+  inputs: FounderLoopInputs = {},
+): FounderLoopSummary {
   const sessionsStarted = count(events, "session_started");
   const linksSubmitted = count(events, "link_submitted");
   const clipsGenerated = count(events, "clips_generated");
@@ -37,11 +47,25 @@ export function summarizeFounderLoop(events: TrackingEvent[]): FounderLoopSummar
   const genSuccessRate = linksSubmitted > 0 ? clipsGenerated / linksSubmitted : 0;
   const playRate = clipsGenerated > 0 ? clipsPlayed / clipsGenerated : 0;
   const downloadRate = clipsPlayed > 0 ? clipsDownloaded / clipsPlayed : 0;
-  const failureRate = linksSubmitted > 0 ? generationFailed / linksSubmitted : 0;
+  const failureRate =
+    typeof inputs.failureRate === "number"
+      ? inputs.failureRate
+      : linksSubmitted > 0
+        ? generationFailed / linksSubmitted
+        : 0;
+  const valueRate = typeof inputs.valueRate === "number" ? inputs.valueRate : downloadRate;
+  const returnRate = typeof inputs.returnRate === "number" ? inputs.returnRate : 0;
+  const weakestFunnelStep = inputs.weakestFunnelStep ?? null;
 
   let bottleneck: FounderLoopBottleneck = "none";
   if (failureRate >= 0.3 || generationFailed >= 3) {
     bottleneck = "reliability";
+  } else if (weakestFunnelStep === "generated") {
+    bottleneck = "generation";
+  } else if (weakestFunnelStep === "played") {
+    bottleneck = "presentation";
+  } else if (weakestFunnelStep === "downloaded") {
+    bottleneck = "value";
   } else if (linksSubmitted >= 3 && genSuccessRate < 0.6) {
     bottleneck = "generation";
   } else if (clipsGenerated >= 3 && playRate < 0.5) {
@@ -53,6 +77,8 @@ export function summarizeFounderLoop(events: TrackingEvent[]): FounderLoopSummar
   const currentStatus =
     linksSubmitted === 0
       ? "No clipper usage yet. Start driving first founder test sessions."
+      : valueRate > 0 && returnRate > 0
+        ? "Users are receiving value and some are returning; PMF signal is emerging."
       : bottleneck === "none"
         ? "Core clipper loop is working. Users are progressing through generation and output usage."
         : "Users are entering the loop, but one stage is clearly underperforming.";

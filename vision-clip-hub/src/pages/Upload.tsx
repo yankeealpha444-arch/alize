@@ -1,3 +1,9 @@
+// AI SAFE FILE
+// UI LOCKED
+// DO NOT MODIFY LAYOUT, STYLE, STRUCTURE, ROUTES, COPY, OR TEMPLATE
+// ONLY FIX THE SPECIFIC REQUESTED LOGIC
+// UI changes require: "UI change approved"
+
 export { default } from "./Index";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";

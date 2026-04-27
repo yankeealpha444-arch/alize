@@ -1,3 +1,9 @@
+// AI SAFE FILE
+// UI LOCKED
+// DO NOT MODIFY LAYOUT, STYLE, STRUCTURE, ROUTES, COPY, OR TEMPLATE
+// ONLY FIX THE SPECIFIC REQUESTED LOGIC
+// UI changes require: "UI change approved"
+
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { fetchClipperState, processQueuedVideoJob } from "@/lib/mvp/videoClipperBackend";

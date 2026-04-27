@@ -274,38 +274,13 @@ export async function processQueuedVideoJob(jobId: string): Promise<void> {
     return;
   }
 
-  const { data: claimed, error: claimErr } = await sb
-    .from("video_jobs")
-    .update({ status: "processing", updated_at: new Date().toISOString() })
-    .eq("id", jobId)
-    .eq("status", "queued")
-    .select("*")
-    .maybeSingle();
-
-  if (claimErr) {
-    console.error("[clipper-worker] processing failed", claimErr);
-    return;
-  }
-  if (!claimed) {
-    return;
-  }
-
-  const job = claimed as VideoJobRow;
-  console.log("[clipper-worker] job claimed", jobId);
-  console.log("[clipper-worker] processing started", jobId);
-
-  try {
-    const clipRows = buildUploadClipRows(job);
-    await insertClipsAndExportsAndComplete(sb, job, clipRows, jobId);
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    await sb.from("video_jobs").update({
-      status: "failed",
-      error_message: msg,
-      updated_at: new Date().toISOString(),
-    }).eq("id", jobId);
-    console.error("[clipper-worker] processing failed", e);
-  }
+  // IMPORTANT: live clip row insertion is server-worker only.
+  // This frontend helper must never insert demo/mock/fallback clips into video_clips.
+  console.log("[clipper][backend] processQueuedVideoJob skipped: server worker only", {
+    jobId,
+    source_kind: sk,
+  });
+  return;
 }
 
 function asTableClient() {
@@ -313,6 +288,7 @@ function asTableClient() {
   type SelectChain = {
     eq: (col: string, value: string) => SelectChain;
     in: (col: string, values: string[]) => SelectChain;
+    lte: (col: string, value: string) => SelectChain;
     order: (col: string, opts: { ascending: boolean }) => SelectChain;
     limit: (n: number) => QueryResult;
   };
@@ -354,109 +330,7 @@ function makeUuidLike(seed: string): string {
   return `${clean}-${Date.now()}`;
 }
 
-async function ensureFallbackClipForCompletedJob(
-  sb: ReturnType<typeof asTableClient>,
-  job: VideoJobRow,
-): Promise<void> {
-  const fallbackVideoUrl = "https://www.w3schools.com/html/mov_bbb.mp4";
-  const fallbackThumbnailUrl = "https://images.unsplash.com/photo-1498050108023-c5249f4df085?auto=format&fit=crop&w=1280&q=80";
-  const rows = [
-    {
-      job_id: job.id,
-      project_id: job.project_id,
-      label: "Clip 1",
-      start_time_sec: 0,
-      end_time_sec: 15,
-      duration_sec: 15,
-      score: 82,
-      caption: "Strong opening for retention",
-      thumbnail_url: fallbackThumbnailUrl,
-      video_url: fallbackVideoUrl,
-      status: "ready" as const,
-    },
-    {
-      job_id: job.id,
-      project_id: job.project_id,
-      label: "Clip 2",
-      start_time_sec: 30,
-      end_time_sec: 45,
-      duration_sec: 15,
-      score: 68,
-      caption: "Mid-video payoff moment",
-      thumbnail_url: fallbackThumbnailUrl,
-      video_url: fallbackVideoUrl,
-      status: "ready" as const,
-    },
-    {
-      job_id: job.id,
-      project_id: job.project_id,
-      label: "Clip 3",
-      start_time_sec: 60,
-      end_time_sec: 75,
-      duration_sec: 15,
-      score: 54,
-      caption: "Clear takeaway segment",
-      thumbnail_url: fallbackThumbnailUrl,
-      video_url: fallbackVideoUrl,
-      status: "ready" as const,
-    },
-  ];
-  const insertRes = await sb.from("video_clips").insert(rows);
-  if (insertRes.error) throw new Error(insertRes.error.message || "Insert fallback clip failed");
-}
-
-async function insertUploadedFallbackClips(
-  sb: ReturnType<typeof asTableClient>,
-  job: VideoJobRow,
-): Promise<void> {
-  const video_url = "https://www.w3schools.com/html/mov_bbb.mp4";
-  const thumbnail_url = "https://images.unsplash.com/photo-1498050108023-c5249f4df085?auto=format&fit=crop&w=1280&q=80";
-  const rows = [
-    {
-      job_id: job.id,
-      project_id: job.project_id,
-      label: "Clip 1",
-      start_time_sec: 0,
-      end_time_sec: 15,
-      duration_sec: 15,
-      score: 82,
-      caption: "Strong opening for retention",
-      thumbnail_url,
-      video_url,
-      status: "ready",
-    },
-    {
-      job_id: job.id,
-      project_id: job.project_id,
-      label: "Clip 2",
-      start_time_sec: 30,
-      end_time_sec: 45,
-      duration_sec: 15,
-      score: 68,
-      caption: "Mid-video payoff moment",
-      thumbnail_url,
-      video_url,
-      status: "ready",
-    },
-    {
-      job_id: job.id,
-      project_id: job.project_id,
-      label: "Clip 3",
-      start_time_sec: 60,
-      end_time_sec: 75,
-      duration_sec: 15,
-      score: 54,
-      caption: "Clear takeaway segment",
-      thumbnail_url,
-      video_url,
-      status: "ready",
-    },
-  ];
-  const res = await sb.from("video_clips").insert(rows);
-  if (res.error) throw new Error(res.error.message || "Insert uploaded fallback clips failed");
-}
-
-// ffmpeg disabled for MVP
+// Real clip generation is handled by server/clipWorker.mjs + server/processVideoFromUrl.mjs.
 
 async function fetchYoutubeOembed(url: string): Promise<{ title: string; authorName: string | null; thumbnailUrl: string | null } | null> {
   try {
@@ -474,64 +348,7 @@ async function fetchYoutubeOembed(url: string): Promise<{ title: string; authorN
   }
 }
 
-async function seedInstantYoutubeClips(job: VideoJobRow): Promise<void> {
-  const sourceUrl = (job.source_url || "").trim();
-  const videoId = job.youtube_video_id || parseYoutubeVideoId(sourceUrl);
-  if (!videoId || !sourceUrl) return;
-
-  const oembed = await fetchYoutubeOembed(sourceUrl);
-  const title = (oembed?.title || "YouTube Clip").trim();
-  const channel = oembed?.authorName ?? "YouTube";
-  const hooks = [
-    "Strong opening for retention",
-    "Mid-video payoff moment",
-    "Clear takeaway segment",
-  ];
-  const windows: Array<[number, number]> = [
-    [0, 15],
-    [30, 45],
-    [60, 75],
-  ];
-
-  const thumbVariants = [
-    oembed?.thumbnailUrl ?? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
-    `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
-    `https://i.ytimg.com/vi/${videoId}/sddefault.jpg`,
-  ];
-  const previewMp4Fallback =
-    "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4";
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const sb = supabase as any;
-  const rows = windows.map(([start, end], i) => ({
-    job_id: job.id,
-    project_id: job.project_id,
-    label: `Clip ${i + 1} · ${shortTitle(title, 34)}`,
-    start_time_sec: start,
-    end_time_sec: end,
-    duration_sec: end - start,
-    score: 82 - i * 6,
-    caption: `${hooks[i] || "Suggested highlight"} • ${channel}`,
-    thumbnail_url: thumbVariants[i] ?? thumbVariants[0],
-    video_url: previewMp4Fallback,
-    status: "ready",
-  }));
-  const ins = await sb.from("video_clips").insert(rows);
-  if (ins.error) throw new Error(ins.error.message || "Failed to seed instant clip cards");
-
-  // Keep seed clips visibly "instant" while worker upgrades to real files.
-  await sb
-    .from("video_jobs")
-    .update({
-      metadata: {
-        ...(job.metadata || {}),
-        instant_seeded: true,
-        instant_seeded_at: new Date().toISOString(),
-      },
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", job.id);
-}
+// Intentionally no instant seeded demo clips.
 
 /** MVP: all clipper reads/writes target this project (seeded in Supabase). */
 export const CLIPPER_DB_PROJECT_ID = "seed-project-ai-clipper";
@@ -550,6 +367,12 @@ export async function uploadSourceVideoAndCreateJob(
   projectId: string,
   file: File,
 ): Promise<VideoJobRow> {
+  console.log("[clipper][backend] uploadSourceVideoAndCreateJob:start", {
+    projectId,
+    fileName: file.name,
+    fileSize: file.size,
+    fileType: file.type || null,
+  });
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
   const tempId = makeUuidLike(safeName);
   const sourcePath = `${projectId}/uploads/${tempId}-${safeName}`;
@@ -577,20 +400,14 @@ export async function uploadSourceVideoAndCreateJob(
 
   try {
     const row = requireData(inserted.data as VideoJobRow | null, inserted.error, "Create video job");
-    // Temporary MVP behavior: mark created jobs completed immediately.
-    await sb.from("video_jobs").update({
-      status: "completed",
-      updated_at: new Date().toISOString(),
-      error_message: null,
-    }).eq("id", row.id);
-    await insertUploadedFallbackClips(sb, { ...row, status: "completed" });
-    console.log("[clipper] job created", { jobId: row.id, status: row.status });
-    return {
-      ...row,
-      status: "completed",
-      error_message: null,
-      updated_at: new Date().toISOString(),
-    };
+    console.log("[clipper][backend] uploadSourceVideoAndCreateJob:created", {
+      projectId,
+      createdJobId: row.id,
+      status: row.status,
+      sourcePath: row.source_path,
+    });
+    console.log("[clipper] upload job queued for worker", { jobId: row.id, status: row.status });
+    return row;
   } catch (e) {
     const msg = e instanceof Error ? e.message : undefined;
     throw new Error(mapServiceError(msg, "Create video job failed"));
@@ -599,6 +416,10 @@ export async function uploadSourceVideoAndCreateJob(
 
 export async function createVideoJobFromSourceUrl(projectId: string, sourceUrl: string): Promise<VideoJobRow> {
   const url = sourceUrl.trim();
+  console.log("[clipper][backend] createVideoJobFromSourceUrl:start", {
+    projectId,
+    submittedUrl: url,
+  });
   if (!url) throw new Error("Missing source URL");
   if (!isVideoContentUrlInput(url)) {
     throw new Error("Paste a supported video link (YouTube, TikTok, or Instagram).");
@@ -634,34 +455,41 @@ export async function createVideoJobFromSourceUrl(projectId: string, sourceUrl: 
     .single();
   try {
     const row = requireData(inserted.data as VideoJobRow | null, inserted.error, "Create URL video job");
-    // Temporary MVP behavior: mark created jobs completed immediately.
-    await sb.from("video_jobs").update({
-      status: "completed",
-      updated_at: new Date().toISOString(),
-      error_message: null,
-    }).eq("id", row.id);
-    if (row.source_kind === "youtube_url") {
-      try {
-        await seedInstantYoutubeClips(row);
-      } catch (e) {
-        console.warn("[clipper] instant YouTube seed failed", e);
-      }
-    }
-    console.log("[clipper] job created", { jobId: row.id, status: row.status });
-    return {
-      ...row,
-      status: "completed",
-      error_message: null,
-      updated_at: new Date().toISOString(),
-    };
+    console.log("[clipper][backend] created video job only", {
+      projectId,
+      createdJobId: row.id,
+      source_kind: row.source_kind ?? null,
+      source_url: row.source_url ?? null,
+      status: row.status,
+    });
+    console.log("[clipper][backend] createVideoJobFromSourceUrl:created", {
+      projectId,
+      createdJobId: row.id,
+      source_kind: row.source_kind ?? null,
+      source_url: row.source_url ?? null,
+      status: row.status,
+    });
+    console.log("[job-created]", { id: row.id, status: row.status });
+    return row;
   } catch (e) {
     const msg = e instanceof Error ? e.message : undefined;
     throw new Error(mapServiceError(msg, "Create URL video job failed"));
   }
 }
 
-export async function fetchClipperState(projectId: string, preferredJobId?: string | null): Promise<ClipperState> {
+export async function fetchClipperState(
+  projectId: string,
+  preferredJobId?: string | null,
+  options?: { cacheBuster?: number; uploadOnly?: boolean },
+): Promise<ClipperState> {
   const sb = asTableClient();
+  const nowIso = new Date(options?.cacheBuster ?? Date.now()).toISOString();
+  console.log("[clipper][backend] fetchClipperState:start", {
+    projectId,
+    preferredJobId: preferredJobId ?? null,
+    cacheBuster: options?.cacheBuster ?? null,
+    uploadOnly: Boolean(options?.uploadOnly),
+  });
   let latestJob: VideoJobRow | null = null;
   if (preferredJobId) {
     const preferredRes = await sb
@@ -669,53 +497,63 @@ export async function fetchClipperState(projectId: string, preferredJobId?: stri
       .select("*")
       .eq("project_id", projectId)
       .eq("id", preferredJobId)
+      .lte("created_at", nowIso)
       .limit(1);
     const preferredRows = requireData(preferredRes.data, preferredRes.error, "Fetch preferred video job") as VideoJobRow[];
     latestJob = preferredRows[0] ?? null;
-    /** Stale `alize_video_job_id_*` (wrong id or old project) must not zero out the UI — use latest job for this project. */
+    if (latestJob && options?.uploadOnly && latestJob.source_kind && latestJob.source_kind !== "upload") {
+      console.log("[clipper][backend] fetchClipperState:preferred-job-not-upload", {
+        projectId,
+        preferredJobId,
+        source_kind: latestJob.source_kind,
+      });
+      return { latestJob: null, clips: [], latestExportsByClipId: {}, latestFeedbackByClipId: {} };
+    }
     if (!latestJob) {
-      const latestJobsRes = await sb
-        .from("video_jobs")
-        .select("*")
-        .eq("project_id", projectId)
-        .order("created_at", { ascending: false })
-        .limit(20);
-      const jobs = requireData(latestJobsRes.data, latestJobsRes.error, "Fetch video jobs (preferred missing)") as VideoJobRow[];
-      latestJob = jobs[0] ?? null;
+      console.log("[clipper][backend] fetchClipperState:preferred-job-missing", {
+        projectId,
+        preferredJobId,
+      });
+      return { latestJob: null, clips: [], latestExportsByClipId: {}, latestFeedbackByClipId: {} };
     }
   } else {
-    const latestJobsRes = await sb
-      .from("video_jobs")
-      .select("*")
-      .eq("project_id", projectId)
+    const latestJobsQuery = sb.from("video_jobs").select("*").eq("project_id", projectId);
+    const latestJobsRes = await (options?.uploadOnly
+      ? latestJobsQuery.eq("source_kind", "upload")
+      : latestJobsQuery)
+      .lte("created_at", nowIso)
       .order("created_at", { ascending: false })
       .limit(20);
-    const jobs = requireData(latestJobsRes.data, latestJobsRes.error, "Fetch video jobs") as VideoJobRow[];
+    const jobs = requireData(latestJobsRes.data, latestJobsRes.error, "Fetch video jobs").filter(Boolean) as VideoJobRow[];
     latestJob = jobs[0] ?? null;
   }
   if (!latestJob) {
+    console.log("[clipper][backend] fetchClipperState:no-latest-job", { projectId });
     return { latestJob: null, clips: [], latestExportsByClipId: {}, latestFeedbackByClipId: {} };
   }
+  console.log("[clipper][backend] fetchClipperState:latest-job", {
+    projectId,
+    latestJobId: latestJob.id,
+    status: latestJob.status,
+    source_url: latestJob.source_url ?? null,
+    source_filename: latestJob.source_filename ?? null,
+  });
 
   const clipsRes = await sb
     .from("video_clips")
     .select("*")
     .eq("job_id", latestJob.id)
+    .lte("created_at", nowIso)
     .order("score", { ascending: false })
     .limit(12);
   let clips = requireData(clipsRes.data, clipsRes.error, "Fetch clips") as VideoClipRow[];
-  if (clips.length < 3 && latestJob.status === "completed") {
-    await ensureFallbackClipForCompletedJob(sb, latestJob);
-    const retryClipsRes = await sb
-      .from("video_clips")
-      .select("*")
-      .eq("job_id", latestJob.id)
-      .order("score", { ascending: false })
-      .limit(12);
-    clips = requireData(retryClipsRes.data, retryClipsRes.error, "Fetch clips after fallback") as VideoClipRow[];
-  }
+  // No demo/fallback clip seeding here. Wait for real worker-generated rows.
   const clipIds = clips.map((c) => c.id);
   if (!clipIds.length) {
+    console.log("[clipper][backend] fetchClipperState:no-clip-rows", {
+      projectId,
+      latestJobId: latestJob.id,
+    });
     return { latestJob, clips: [], latestExportsByClipId: {}, latestFeedbackByClipId: {} };
   }
 
@@ -723,12 +561,14 @@ export async function fetchClipperState(projectId: string, preferredJobId?: stri
     .from("clip_exports")
     .select("*")
     .in("clip_id", clipIds)
+    .lte("created_at", nowIso)
     .order("created_at", { ascending: false })
     .limit(200);
   const feedbackRes = await sb
     .from("clip_feedback")
     .select("*")
     .in("clip_id", clipIds)
+    .lte("created_at", nowIso)
     .order("created_at", { ascending: false })
     .limit(200);
 
@@ -749,6 +589,28 @@ export async function fetchClipperState(projectId: string, preferredJobId?: stri
   }
 
   return { latestJob, clips, latestExportsByClipId, latestFeedbackByClipId };
+}
+
+export async function fetchVideoClipsByJobIdFresh(
+  jobId: string,
+  options?: { cacheBuster?: number },
+): Promise<VideoClipRow[]> {
+  const sb = asTableClient();
+  const nowIso = new Date(options?.cacheBuster ?? Date.now()).toISOString();
+  const clipsRes = await sb
+    .from("video_clips")
+    .select("*")
+    .eq("job_id", jobId)
+    .lte("created_at", nowIso)
+    .order("score", { ascending: false })
+    .limit(12);
+  const clips = requireData(clipsRes.data, clipsRes.error, "Fetch clips by job id (fresh)") as VideoClipRow[];
+  console.log("[clipper][backend] fetchVideoClipsByJobIdFresh", {
+    jobId,
+    cacheBuster: options?.cacheBuster ?? null,
+    clipCount: clips.length,
+  });
+  return clips;
 }
 
 export async function selectClip(jobId: string, clipId: string): Promise<void> {

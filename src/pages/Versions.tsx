@@ -1,8 +1,15 @@
+// AI SAFE FILE
+// UI LOCKED
+// DO NOT MODIFY LAYOUT, STYLE, STRUCTURE, ROUTES, COPY, OR TEMPLATE
+// ONLY FIX THE SPECIFIC REQUESTED LOGIC
+// UI changes require: "UI change approved"
+
 import { GitBranch, Check, ExternalLink } from "lucide-react";
-import { getProjectData } from "@/lib/projectData";
+import { getProjectData, rollbackToVersion } from "@/lib/projectData";
 import { useProjectId } from "@/hooks/useProject";
 import { useNavigate } from "react-router-dom";
 import { hashAppUrl } from "@/lib/hashRoutes";
+import { toast } from "sonner";
 
 const Versions = () => {
   const projectId = useProjectId();
@@ -86,6 +93,23 @@ const Versions = () => {
               </div>
             </div>
             <p className="text-sm text-muted-foreground">{v.changes}</p>
+            {v.snapshot ? (
+              <button
+                type="button"
+                onClick={() => {
+                  const ok = rollbackToVersion(v.version, projectId);
+                  if (ok) {
+                    toast.success(`Rolled back to V${v.version}`);
+                    navigate(`/preview/${projectId}`);
+                  } else {
+                    toast.error("Rollback unavailable for this version");
+                  }
+                }}
+                className="mt-3 text-xs font-semibold text-foreground border border-border rounded-lg px-3 py-1.5 hover:bg-secondary transition-colors"
+              >
+                Rollback to V{v.version}
+              </button>
+            ) : null}
           </div>
         ))}
       </div>

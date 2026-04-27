@@ -13,40 +13,319 @@ import { promisify } from "util";
 import fs from "fs";
 import path from "path";
 import os from "os";
+import { loadEnvFromRoot } from "./loadEnvFromRoot.mjs";
 
 const execFileAsync = promisify(execFile);
+loadEnvFromRoot();
+console.log("[clipper-worker] SHORTS_WINDOW_LOGIC_V2_ACTIVE");
+console.log("[clipper-worker] VIRAL_HEURISTIC_V1_ACTIVE");
 
 const CLIP_EXPORT_BUCKET = process.env.SUPABASE_STORAGE_BUCKET_CLIP_EXPORTS || "clip-exports";
+const VIDEO_UPLOAD_BUCKET = process.env.SUPABASE_STORAGE_BUCKET_VIDEO_UPLOADS || "video-uploads";
+const WIN = process.platform === "win32";
+const FORBIDDEN_PLACEHOLDER_HOST = "interactive-examples.mdn.mozilla.net";
 
-/** MVP fixed windows (start_sec inclusive, end_sec exclusive in naming — we use duration end-start). */
-const SEGMENTS = [
-  [0, 15],
-  [30, 45],
-  [60, 75],
+function existsFile(p) {
+  try {
+    return Boolean(p) && fs.existsSync(p);
+  } catch {
+    return false;
+  }
+}
+
+function resolveExecutable(envVar, names, discovered = []) {
+  const fromEnv = process.env[envVar];
+  if (existsFile(fromEnv)) return fromEnv;
+
+  const checks = [...discovered];
+  if (WIN) {
+    const local = process.env.LOCALAPPDATA || "";
+    const winChecksByEnv = {
+      YT_DLP_PATH: [
+        path.join(local, "Microsoft", "WinGet", "Packages", "yt-dlp.yt-dlp_Microsoft.Winget.Source_8wekyb3d8bbwe", "yt-dlp.exe"),
+      ],
+      FFMPEG_PATH: [
+        path.join(local, "Microsoft", "WinGet", "Packages", "Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe", "ffmpeg-8.1-full_build", "bin", "ffmpeg.exe"),
+        path.join(local, "Microsoft", "WinGet", "Packages", "yt-dlp.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe", "ffmpeg-N-123778-g3b55818764-win64-gpl", "bin", "ffmpeg.exe"),
+      ],
+      FFPROBE_PATH: [
+        path.join(local, "Microsoft", "WinGet", "Packages", "Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe", "ffmpeg-8.1-full_build", "bin", "ffprobe.exe"),
+        path.join(local, "Microsoft", "WinGet", "Packages", "yt-dlp.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe", "ffmpeg-N-123778-g3b55818764-win64-gpl", "bin", "ffprobe.exe"),
+      ],
+    };
+    checks.push(...(winChecksByEnv[envVar] || []));
+  }
+  const found = checks.find(existsFile);
+  if (found) return found;
+
+  return names[0];
+}
+
+const YT_DLP_BIN = resolveExecutable("YT_DLP_PATH", ["yt-dlp", "yt-dlp.exe"], [
+  process.env.YT_DLP_PATH || "",
+]);
+const FFMPEG_BIN = resolveExecutable("FFMPEG_PATH", ["ffmpeg", "ffmpeg.exe"], [
+  process.env.FFMPEG_PATH || "",
+]);
+const FFPROBE_BIN = resolveExecutable(
+  "FFPROBE_PATH",
+  ["ffprobe", "ffprobe.exe"],
+  [
+    process.env.FFPROBE_PATH || "",
+    process.env.FFMPEG_PATH
+      ? process.env.FFMPEG_PATH.replace(/ffmpeg(?:\.exe)?$/i, WIN ? "ffprobe.exe" : "ffprobe")
+      : "",
+  ],
+);
+
+/** YouTube Shorts–style: each export is a bounded-length MP4, never a third of a long file. */
+const MIN_CLIP_SEC = 15;
+const MAX_CLIP_SEC = 45;
+const INTRO_SKIP_SEC = 5;
+const GAP_SEC = 2;
+const NUM_CLIPS = 3;
+
+/** When ffprobe fails — still cut three short early windows (never 0–full). */
+const FALLBACK_UNKNOWN_DURATION_SEGMENTS = [
+  [5, 25],
+  [30, 50],
+  [60, 80],
 ];
+
+/**
+ * Clamp [start, end] to source length; enforce max duration MAX_CLIP_SEC; avoid sub-second exports.
+ * @param {number} start
+ * @param {number} end
+ * @param {number} T
+ * @returns {[number, number]}
+ */
+function clampWindow(start, end, T) {
+  let s = Math.max(0, Math.min(T, start));
+  let e = Math.max(s + 1, Math.min(T, end));
+  let dur = e - s;
+  if (dur > MAX_CLIP_SEC) {
+    e = s + MAX_CLIP_SEC;
+    dur = e - s;
+  }
+  if (dur < MIN_CLIP_SEC && T - s >= MIN_CLIP_SEC) {
+    e = Math.min(T, s + MIN_CLIP_SEC);
+  }
+  return [Math.round(s * 100) / 100, Math.round(e * 100) / 100];
+}
+
+/**
+ * Three non-overlapping Shorts-length windows spread through the timeline (heuristic “viral” placement).
+ * @param {number} durationSec — ffprobe duration in seconds; 0 / NaN means unknown.
+ * @returns {Array<[number, number]>}
+ */
+function computeClipWindows(durationSec) {
+  const T = Number(durationSec);
+  if (!Number.isFinite(T) || T <= 0) {
+    log("clip windows", { reason: "duration_unknown_or_zero", segments: FALLBACK_UNKNOWN_DURATION_SEGMENTS });
+    return FALLBACK_UNKNOWN_DURATION_SEGMENTS.map((x) => [...x]);
+  }
+
+  const total = Math.floor(T);
+
+  /** Very short source: best-effort 3 tiles (may be <15s each). Never one clip = full length if avoidable. */
+  if (total < INTRO_SKIP_SEC + NUM_CLIPS * 4 + (NUM_CLIPS - 1) * GAP_SEC) {
+    const piece = Math.max(1, Math.floor((total - (NUM_CLIPS - 1) * GAP_SEC) / NUM_CLIPS));
+    const out = [];
+    let at = 0;
+    for (let i = 0; i < NUM_CLIPS; i++) {
+      const s = at;
+      const e = i === NUM_CLIPS - 1 ? total : Math.min(total, at + piece);
+      out.push(clampWindow(s, e, total));
+      at = e + GAP_SEC;
+    }
+    log("clip windows", { reason: "very_short_source", total, segments: out });
+    return out;
+  }
+
+  /** Choose target length (prefer 15–45s each) that fits three windows + gaps after intro skip. */
+  const usable = total - INTRO_SKIP_SEC - (NUM_CLIPS - 1) * GAP_SEC;
+  let L = Math.floor(usable / NUM_CLIPS);
+  L = Math.min(MAX_CLIP_SEC, L);
+  const minSlots = NUM_CLIPS * MIN_CLIP_SEC + (NUM_CLIPS - 1) * GAP_SEC;
+  if (usable >= minSlots) {
+    L = Math.max(MIN_CLIP_SEC, L);
+  }
+  L = Math.max(4, L);
+
+  /**
+   * Viral heuristic zones (launch-safe):
+   *  - early hook: 8–25%
+   *  - middle payoff: 40–55%
+   *  - late tension: 70–85%
+   */
+  const zones = [
+    { name: "early_hook_zone", startPct: 0.08, endPct: 0.25 },
+    { name: "middle_payoff_zone", startPct: 0.4, endPct: 0.55 },
+    { name: "late_high_tension_zone", startPct: 0.7, endPct: 0.85 },
+  ];
+  const picks = [];
+  for (let i = 0; i < zones.length; i++) {
+    const z = zones[i];
+    const zoneStart = Math.floor(total * z.startPct);
+    const zoneEnd = Math.ceil(total * z.endPct);
+    const zoneSpan = Math.max(1, zoneEnd - zoneStart);
+    let s = zoneStart + Math.max(0, Math.floor((zoneSpan - L) / 2));
+    if (i === 0) s = Math.max(INTRO_SKIP_SEC, s);
+    let e = s + L;
+    if (e > total) {
+      e = total;
+      s = Math.max(i === 0 ? INTRO_SKIP_SEC : 0, e - L);
+    }
+    picks.push([s, e]);
+  }
+
+  // Enforce non-overlap with gap.
+  for (let i = 1; i < picks.length; i++) {
+    if (picks[i][0] < picks[i - 1][1] + GAP_SEC) {
+      const ns = picks[i - 1][1] + GAP_SEC;
+      picks[i][0] = ns;
+      picks[i][1] = ns + L;
+      if (picks[i][1] > total) {
+        picks[i][1] = total;
+        picks[i][0] = Math.max(i === 0 ? INTRO_SKIP_SEC : 0, total - L);
+      }
+    }
+  }
+
+  const out = picks.map(([s, e], i) => {
+    const minStart = i === 0 ? INTRO_SKIP_SEC : 0;
+    return clampWindow(Math.max(minStart, s), e, total);
+  });
+  log("clip windows", {
+    reason: "viral_heuristic_zone_selection",
+    total,
+    clipLen: L,
+    zones,
+    segments: out,
+  });
+  return out;
+}
+
+function enforceShortsDurationWindows(segments, durationSec) {
+  const T = Number(durationSec);
+  return segments.map(([start, end]) => {
+    let s = Number(start);
+    let e = Number(end);
+    if (!Number.isFinite(s)) s = 0;
+    if (!Number.isFinite(e)) e = s + MIN_CLIP_SEC;
+    if (e <= s) e = s + MIN_CLIP_SEC;
+    let len = e - s;
+    if (len > MAX_CLIP_SEC) {
+      e = s + MAX_CLIP_SEC;
+      len = e - s;
+    }
+    if (Number.isFinite(T) && T > 0) {
+      if (e > T) {
+        e = T;
+        s = Math.max(0, e - Math.min(MAX_CLIP_SEC, Math.max(MIN_CLIP_SEC, len)));
+        len = e - s;
+      }
+      // Enforce 15s minimum whenever source is long enough.
+      if (T >= MIN_CLIP_SEC && len < MIN_CLIP_SEC) {
+        e = Math.min(T, s + MIN_CLIP_SEC);
+        if (e - s < MIN_CLIP_SEC) {
+          s = Math.max(0, e - MIN_CLIP_SEC);
+        }
+      }
+    }
+    return [Math.round(s * 100) / 100, Math.round(e * 100) / 100];
+  });
+}
+
+function heuristicCaption(index, start, end, total) {
+  const labels = [
+    "Early hook moment",
+    "Mid-video payoff moment",
+    "Late high-interest moment",
+  ];
+  return labels[index] || `Clip ${index + 1}`;
+}
+
+function heuristicScore(index) {
+  return Math.max(55, 88 - index * 8);
+}
+
+function isRealSupabaseClipUrl(url, supabaseBaseUrl, bucket) {
+  const u = String(url || "").trim();
+  if (!u) return false;
+  if (u.includes(FORBIDDEN_PLACEHOLDER_HOST)) return false;
+  const expectedPrefix = `${supabaseBaseUrl}/storage/v1/object/public/${bucket}/`;
+  return u.startsWith(expectedPrefix);
+}
 
 function log(tag, ...args) {
   console.log(`[clipper-worker] ${tag}`, ...args);
 }
 
-async function ffprobeDurationSec(filePath) {
-  const { stdout } = await execFileAsync("ffprobe", [
-    "-v",
-    "error",
-    "-show_entries",
-    "format=duration",
-    "-of",
-    "default=noprint_wrappers=1:nokey=1",
-    filePath,
-  ]);
-  return Math.max(0, parseFloat(String(stdout).trim()) || 0);
+function formatExecError(err) {
+  if (!err) return "Unknown command error";
+  if (err instanceof Error) {
+    const stderr = typeof err.stderr === "string" ? err.stderr.trim() : "";
+    const stdout = typeof err.stdout === "string" ? err.stdout.trim() : "";
+    if (stderr) return `${err.message}\n${stderr}`.trim();
+    if (stdout) return `${err.message}\n${stdout}`.trim();
+    return err.message;
+  }
+  return String(err);
 }
 
-async function findDownloadedVideo(tmpRoot) {
-  const names = fs.readdirSync(tmpRoot);
-  const vid = names.find((n) => /\.(mp4|webm|mkv|mov)$/i.test(n));
-  if (!vid) throw new Error("yt-dlp did not produce a video file in temp dir");
-  return path.join(tmpRoot, vid);
+async function updateJobStage(sb, jobId, prevMeta, stage, details = {}) {
+  const nextMeta = {
+    ...prevMeta,
+    worker: {
+      ...(prevMeta.worker || {}),
+      stage,
+      stage_updated_at: new Date().toISOString(),
+      ...details,
+    },
+  };
+
+  await sb
+    .from("video_jobs")
+    .update({
+      updated_at: new Date().toISOString(),
+      metadata: nextMeta,
+    })
+    .eq("id", jobId)
+    .eq("status", "processing");
+
+  return nextMeta;
+}
+
+async function ffprobeDurationSec(filePath) {
+  try {
+    const { stdout, stderr } = await execFileAsync(FFPROBE_BIN, [
+      "-v",
+      "error",
+      "-show_entries",
+      "format=duration",
+      "-of",
+      "default=noprint_wrappers=1:nokey=1",
+      filePath,
+    ]);
+    const trimmed = String(stdout ?? "").trim();
+    const v = parseFloat(trimmed);
+    if (!Number.isFinite(v) || v <= 0) {
+      console.error("[clipper-worker][ffprobe] duration parse failed or zero", {
+        filePath,
+        stdout: trimmed,
+        stderrPreview: String(stderr ?? "").slice(0, 800),
+      });
+      return 0;
+    }
+    return v;
+  } catch (err) {
+    console.error("[clipper-worker][ffprobe][ERROR]", {
+      filePath,
+      message: err && typeof err === "object" && "message" in err ? String(err.message) : String(err),
+    });
+    return 0;
+  }
 }
 
 /**
@@ -54,7 +333,30 @@ async function findDownloadedVideo(tmpRoot) {
  * @returns {Promise<void>}
  */
 export async function processVideoFromUrl(job) {
-  const supabaseUrl = process.env.SUPABASE_URL;
+  const trace = Boolean(arguments[1]?.trace);
+  const YTDLP_TIMEOUT_MS = 180000;
+  const FFMPEG_CLIP_TIMEOUT_MS = 90000;
+  const STORAGE_DOWNLOAD_TIMEOUT_MS = 120000;
+  const FFPROBE_TIMEOUT_MS = 120000;
+  const UPLOAD_TIMEOUT_MS = 120000;
+  const step = (n, label, payload = undefined) => {
+    if (!trace) return;
+    if (payload === undefined) {
+      console.log(`[clipper-worker][TRACE][${n}] ${label}`);
+    } else {
+      console.log(`[clipper-worker][TRACE][${n}] ${label}`, payload);
+    }
+  };
+  const withTimeout = async (timeoutMs, label, fn) => {
+    return await Promise.race([
+      fn(),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error(`Step timeout: ${label}`)), timeoutMs),
+      ),
+    ]);
+  };
+
+  const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
   const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!supabaseUrl || !supabaseKey) {
     throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
@@ -63,83 +365,242 @@ export async function processVideoFromUrl(job) {
   const sb = createClient(supabaseUrl, supabaseKey);
   const jobId = job.id;
   const projectId = job.project_id;
+  let jobMetadata =
+    job.metadata && typeof job.metadata === "object" && !Array.isArray(job.metadata) ? job.metadata : {};
+  const sourceKind = String(job.source_kind || "").trim();
   const pageUrl =
     String(job.source_url || "").trim() ||
     (job.youtube_video_id ? `https://www.youtube.com/watch?v=${job.youtube_video_id}` : "");
-  if (!pageUrl) throw new Error("Job has no source_url / youtube_video_id");
+  step(2, "source_url read", { source_url: pageUrl || null, source_kind: sourceKind });
 
   const tmpRoot = path.join(os.tmpdir(), "alize-clipper", jobId);
   fs.mkdirSync(tmpRoot, { recursive: true });
 
   try {
-    log("job claimed", jobId);
+    log("job claimed", { id: jobId, status: "processing", source_kind: sourceKind || null, source_url: pageUrl || null });
+    jobMetadata = await updateJobStage(sb, jobId, jobMetadata, "starting");
 
-    const outTemplate = path.join(tmpRoot, "source.%(ext)s");
-    await execFileAsync("yt-dlp", [
-      "-f",
-      "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/b",
-      "--merge-output-format",
-      "mp4",
-      "-o",
-      outTemplate,
-      "--no-playlist",
-      pageUrl,
-    ]);
+    console.log("[clipper-worker] YT_DLP_BIN =", YT_DLP_BIN);
+    console.log("[clipper-worker] FFMPEG_BIN =", FFMPEG_BIN);
+    console.log("[clipper-worker] FFPROBE_BIN =", FFPROBE_BIN);
+    log("binary", "yt-dlp", YT_DLP_BIN);
+    log("binary", "ffmpeg", FFMPEG_BIN);
+    log("binary", "ffprobe", FFPROBE_BIN);
 
-    const inputPath = await findDownloadedVideo(tmpRoot);
-    log("video downloaded", inputPath);
+    let inputMediaSource = "";
+    let sourceIsLocalFile = false;
+    if (sourceKind === "upload" || (!sourceKind && String(job.source_path || "").trim())) {
+      const sourcePath = String(job.source_path || "").trim();
+      if (!sourcePath) throw new Error("Job has no source_path for upload");
+      log("upload source path", sourcePath);
+      jobMetadata = await updateJobStage(sb, jobId, jobMetadata, "upload-source-download-starting", { source_path: sourcePath });
+      step(3, "download command started", { mode: "storage-download", sourcePath });
+      const dl = await withTimeout(STORAGE_DOWNLOAD_TIMEOUT_MS, "storage download source video", async () => {
+        return await sb.storage.from(VIDEO_UPLOAD_BUCKET).download(sourcePath);
+      });
+      if (dl.error) throw new Error(dl.error.message || "Could not download uploaded source video");
+      const arrayBuffer = await dl.data.arrayBuffer();
+      inputMediaSource = path.join(tmpRoot, "source-upload.mp4");
+      fs.writeFileSync(inputMediaSource, Buffer.from(arrayBuffer));
+      sourceIsLocalFile = true;
+      jobMetadata = await updateJobStage(sb, jobId, jobMetadata, "upload-source-download-complete");
+      step(4, "download command completed", { mode: "storage-download", inputPath: inputMediaSource });
+      log("upload video downloaded", inputMediaSource);
+    } else {
+      if (!pageUrl) throw new Error("Job has no source_url / youtube_video_id");
+      step(3, "download command started", { mode: "yt-dlp", source_url: pageUrl });
+      log("yt-dlp start", { jobId, source_url: pageUrl });
+      jobMetadata = await updateJobStage(sb, jobId, jobMetadata, "yt-dlp-starting", { source_url: pageUrl });
+      const ytDlpArgs = [
+        "-g",
+        "-f",
+        "best[height<=360][ext=mp4]/mp4",
+        "--no-playlist",
+        "--retries",
+        "3",
+        "--fragment-retries",
+        "3",
+        "--socket-timeout",
+        "30",
+        "--force-ipv4",
+        pageUrl,
+      ];
+      log("yt-dlp args", { jobId, args: ytDlpArgs });
+      jobMetadata = await updateJobStage(sb, jobId, jobMetadata, "yt-dlp-downloading", { strategy: "stream-url" });
+      try {
+        const { stdout } = await withTimeout(YTDLP_TIMEOUT_MS, "yt-dlp get stream url", async () => {
+          return await execFileAsync(YT_DLP_BIN, ytDlpArgs);
+        });
+        inputMediaSource = String(stdout || "")
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .find((line) => /^https?:\/\//i.test(line)) || "";
+        if (!inputMediaSource) {
+          throw new Error("yt-dlp returned no playable stream url");
+        }
+        sourceIsLocalFile = false;
+        jobMetadata = await updateJobStage(sb, jobId, jobMetadata, "yt-dlp-complete", { strategy: "stream-url" });
+        log("yt-dlp success", { jobId, source_url: pageUrl, stream_url_found: true });
+      } catch (err) {
+        const msg = formatExecError(err);
+        log("yt-dlp fail", { jobId, error_message: msg });
+        throw new Error(msg);
+      }
+      step(4, "download command completed", { mode: "yt-dlp", inputMediaSource });
+      log("video stream resolved", { inputMediaSource });
+    }
+    step(5, "input source ready", {
+      inputMediaSource,
+      sourceIsLocalFile,
+      exists: sourceIsLocalFile ? fs.existsSync(inputMediaSource) : null,
+    });
 
-    const durationSec = await ffprobeDurationSec(inputPath);
+    jobMetadata = await updateJobStage(sb, jobId, jobMetadata, "ffprobe");
+    step(6, "ffprobe started", { inputMediaSource });
+    const durationSec = await withTimeout(FFPROBE_TIMEOUT_MS, "ffprobe duration", async () => {
+      return await ffprobeDurationSec(inputMediaSource);
+    });
+    log("ffprobe duration", { jobId, duration_sec: durationSec });
+    step(7, "ffprobe completed", { durationSec });
     log("source duration_sec", durationSec);
-
-    const lastEnd = SEGMENTS[SEGMENTS.length - 1][1];
-    if (durationSec < lastEnd) {
-      throw new Error(
-        `Video is shorter than ${lastEnd}s (got ${Math.floor(durationSec)}s). Need at least 75s for fixed MVP segments.`,
+    if (!Number.isFinite(durationSec) || durationSec <= 0) {
+      let bytes = null;
+      try {
+        bytes = sourceIsLocalFile ? fs.statSync(inputMediaSource).size : null;
+      } catch {
+        /* ignore */
+      }
+      console.error(
+        "[clipper-worker] ffprobe reported no usable duration; continuing with fallback segment plan 0–15 / 15–30 / 30–45 (not a length failure)",
+        { jobId, inputMediaSource, bytes },
       );
     }
 
+    const segments = enforceShortsDurationWindows(computeClipWindows(durationSec), durationSec);
+    log("clip window chosen", { jobId, segments });
+    log("clip windows resolved", segments);
+
     const clipArtifacts = [];
-    for (let i = 0; i < SEGMENTS.length; i++) {
-      const [start, end] = SEGMENTS[i];
+    jobMetadata = await updateJobStage(sb, jobId, jobMetadata, "exporting-clips", {
+      clip_count_target: segments.length,
+    });
+    for (let i = 0; i < segments.length; i++) {
+      const [start, end] = segments[i];
       const len = end - start;
       const outp = path.join(tmpRoot, `clip-${i + 1}.mp4`);
-      await execFileAsync("ffmpeg", [
+      // Seek before -i for faster remote stream cutting.
+      const ffmpegArgs = [
         "-y",
         "-ss",
         String(start),
-        "-i",
-        inputPath,
         "-t",
         String(len),
-        "-c",
-        "copy",
+        "-i",
+        inputMediaSource,
+        "-map",
+        "0:v:0?",
+        "-map",
+        "0:a:0?",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "20",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+        "-movflags",
+        "+faststart",
         outp,
-      ]);
+      ];
+      log("clip export plan", {
+        clip_index: i + 1,
+        start_time_sec: start,
+        end_time_sec: end,
+        output_path: outp,
+        ffmpeg_args: ffmpegArgs,
+      });
+      if (i === 0) step(8, "ffmpeg clip 1 started", { start_time_sec: start, end_time_sec: end });
+      log("ffmpeg export start", {
+        jobId,
+        clip_index: i + 1,
+        start_time_sec: start,
+        end_time_sec: end,
+        output_path: outp,
+      });
+      await withTimeout(FFMPEG_CLIP_TIMEOUT_MS, `ffmpeg clip ${i + 1}`, async () => {
+        try {
+          await execFileAsync(FFMPEG_BIN, ffmpegArgs);
+          log("ffmpeg export success", { jobId, clip_index: i + 1, output_path: outp });
+        } catch (err) {
+          const msg = formatExecError(err);
+          log("ffmpeg export fail", { jobId, clip_index: i + 1, error_message: msg });
+          throw new Error(`ffmpeg clip ${i + 1} failed: ${msg}`);
+        }
+      });
+      if (i === 0) step(9, "clip 1 completed", { outputPath: outp });
+      console.log("[clipper-worker] clip file created", outp);
       log("clips cut", `clip ${i + 1}`, `${start}s–${end}s`);
       clipArtifacts.push({ start, end, localPath: outp });
     }
 
     const clipInserts = [];
     const uploadMeta = [];
+    jobMetadata = await updateJobStage(sb, jobId, jobMetadata, "uploading-clips", {
+      clip_count_target: clipArtifacts.length,
+    });
 
     for (let i = 0; i < clipArtifacts.length; i++) {
       const { start, end, localPath } = clipArtifacts[i];
       const buf = fs.readFileSync(localPath);
       const storagePath = `${projectId}/rendered-clips/${jobId}/clip-${i + 1}.mp4`;
 
-      const { error: upErr } = await sb.storage.from(CLIP_EXPORT_BUCKET).upload(storagePath, buf, {
-        contentType: "video/mp4",
-        upsert: true,
+      if (i === 0) step(10, "upload started", { storagePath });
+      log("Supabase upload start", { jobId, clip_index: i + 1, storage_path: storagePath });
+      const { data: upData, error: upErr } = await withTimeout(UPLOAD_TIMEOUT_MS, `upload clip ${i + 1}`, async () => {
+        return await sb.storage.from(CLIP_EXPORT_BUCKET).upload(storagePath, buf, {
+          contentType: "video/mp4",
+          upsert: true,
+        });
       });
-      if (upErr) throw new Error(upErr.message);
+      console.log("[clipper-worker] upload result", { data: upData, error: upErr });
+      if (upErr) {
+        log("Supabase upload fail", { jobId, clip_index: i + 1, error_message: upErr.message });
+        console.error("[clipper-worker][EXPORT ERROR]", upErr);
+        throw new Error(upErr.message);
+      }
+      log("Supabase upload success", { jobId, clip_index: i + 1, storage_path: storagePath });
 
-      const { data: pub } = sb.storage.from(CLIP_EXPORT_BUCKET).getPublicUrl(storagePath);
-      const publicUrl = pub?.publicUrl;
+      const publicUrl = `${supabaseUrl}/storage/v1/object/public/${CLIP_EXPORT_BUCKET}/${storagePath}`;
       if (!publicUrl) throw new Error("Could not build public URL for clip upload");
+      if (publicUrl.includes(FORBIDDEN_PLACEHOLDER_HOST)) {
+        throw new Error(`Refusing placeholder clip URL: ${publicUrl}`);
+      }
 
       log("clips uploaded", `clip ${i + 1}`, publicUrl);
+      console.log("[clipper-worker] real clip uploaded", {
+        label: `Clip ${i + 1}`,
+        publicUrl,
+      });
+      if (i === 0) step(11, "upload completed", { storagePath, publicUrl });
+      log("clip upload mapping", {
+        clip_index: i + 1,
+        start_time_sec: start,
+        end_time_sec: end,
+        output_path: localPath,
+        storage_path: storagePath,
+        public_url: publicUrl,
+      });
 
+      const clipScore = heuristicScore(i);
+      const clipCaption = heuristicCaption(i, start, end, Number(durationSec) > 0 ? Number(durationSec) : end);
+      if (!isRealSupabaseClipUrl(publicUrl, supabaseUrl, CLIP_EXPORT_BUCKET)) {
+        throw new Error(`Clip upload URL is not a real Supabase export URL: ${publicUrl}`);
+      }
       clipInserts.push({
         job_id: jobId,
         project_id: projectId,
@@ -147,11 +608,19 @@ export async function processVideoFromUrl(job) {
         start_time_sec: start,
         end_time_sec: end,
         duration_sec: end - start,
-        score: 80 - i * 5,
-        caption: null,
+        score: clipScore,
+        caption: clipCaption,
         thumbnail_url: null,
         video_url: publicUrl,
         status: "ready",
+      });
+      console.log("[clipper-worker] viral clip window chosen", {
+        label: `Clip ${i + 1}`,
+        start_time_sec: start,
+        end_time_sec: end,
+        duration: end - start,
+        score: clipScore,
+        caption: clipCaption,
       });
 
       uploadMeta.push({
@@ -170,6 +639,10 @@ export async function processVideoFromUrl(job) {
     const resolvedClipIds = [];
     for (let i = 0; i < clipInserts.length; i++) {
       const candidate = clipInserts[i];
+      console.log("[clipper-worker] inserting clip row", {
+        label: candidate.label,
+        video_url: candidate.video_url,
+      });
       const match = (existingClips || []).find((r) => r.label === candidate.label);
       if (match) {
         const { error: upClipErr } = await sb
@@ -185,16 +658,39 @@ export async function processVideoFromUrl(job) {
             status: "ready",
           })
           .eq("id", match.id);
-        if (upClipErr) throw new Error(upClipErr.message);
+        if (upClipErr) {
+          log("video_clips insert fail", { jobId, clip_index: i + 1, error_message: upClipErr.message });
+          throw new Error(upClipErr.message);
+        }
+        log("video_clips insert success", { jobId, clip_index: i + 1, clip_id: match.id, mode: "update" });
         resolvedClipIds.push(match.id);
+        log("clip row updated", {
+          clip_id: match.id,
+          label: candidate.label,
+          start_time_sec: candidate.start_time_sec,
+          end_time_sec: candidate.end_time_sec,
+          video_url: candidate.video_url,
+        });
       } else {
         const { data: insClip, error: insClipErr } = await sb
           .from("video_clips")
           .insert(candidate)
           .select("id")
           .single();
-        if (insClipErr) throw new Error(insClipErr.message);
+        if (insClipErr) {
+          log("video_clips insert fail", { jobId, clip_index: i + 1, error_message: insClipErr.message });
+          console.error("[clipper-worker][EXPORT ERROR]", insClipErr);
+          throw new Error(insClipErr.message);
+        }
+        log("video_clips insert success", { jobId, clip_index: i + 1, clip_id: insClip.id, mode: "insert" });
         resolvedClipIds.push(insClip.id);
+        log("clip row inserted", {
+          clip_id: insClip.id,
+          label: candidate.label,
+          start_time_sec: candidate.start_time_sec,
+          end_time_sec: candidate.end_time_sec,
+          video_url: candidate.video_url,
+        });
       }
     }
 
@@ -217,34 +713,83 @@ export async function processVideoFromUrl(job) {
       const prev = existingExport?.[0];
       if (prev?.id) {
         const { error: expUpErr } = await sb.from("clip_exports").update(payload).eq("id", prev.id);
-        if (expUpErr) throw new Error(expUpErr.message);
+        if (expUpErr) {
+          console.error("[clipper-worker][EXPORT ERROR]", expUpErr);
+          throw new Error(expUpErr.message);
+        }
+        log("clip export row updated", { clip_id: clipId, export_id: prev.id, storage_path: payload.storage_path });
       } else {
         const { error: expInsErr } = await sb.from("clip_exports").insert(payload);
-        if (expInsErr) throw new Error(expInsErr.message);
+        if (expInsErr) {
+          console.error("[clipper-worker][EXPORT ERROR]", expInsErr);
+          throw new Error(expInsErr.message);
+        }
+        log("clip export row inserted", { clip_id: clipId, storage_path: payload.storage_path });
       }
     }
 
-    const prevMeta =
-      job.metadata && typeof job.metadata === "object" && !Array.isArray(job.metadata) ? job.metadata : {};
-    await sb
+    const requiredClipCount = 3;
+    const hasThreeRows = resolvedClipIds.length === requiredClipCount;
+    const hasThreeUploads = uploadMeta.length === requiredClipCount;
+    const hasOnlyRealUrls = clipInserts.every((c) => isRealSupabaseClipUrl(c.video_url, supabaseUrl, CLIP_EXPORT_BUCKET));
+    if (!hasThreeRows || !hasThreeUploads || !hasOnlyRealUrls) {
+      throw new Error(
+        `Refusing completion without 3 real clip URLs (rows=${resolvedClipIds.length}, uploads=${uploadMeta.length}, realUrls=${hasOnlyRealUrls})`,
+      );
+    }
+
+    const { data: completedRow, error: completeErr } = await sb
       .from("video_jobs")
       .update({
         status: "completed",
         error_message: null,
         updated_at: new Date().toISOString(),
         metadata: {
-          ...prevMeta,
+          ...jobMetadata,
           worker: {
-            pipeline: "yt-dlp+ffmpeg",
-            segments: SEGMENTS,
-            source_duration_sec: durationSec,
+            ...(jobMetadata.worker || {}),
+            stage: "completed",
+            stage_updated_at: new Date().toISOString(),
+            pipeline: sourceKind === "upload" ? "upload+ffmpeg" : "yt-dlp-stream-url+ffmpeg",
+            segments,
+            source_duration_sec: Number.isFinite(durationSec) && durationSec > 0 ? durationSec : null,
+            duration_probe_failed: !(Number.isFinite(durationSec) && durationSec > 0),
+          },
+        },
+      })
+      .eq("id", jobId)
+      .eq("status", "processing")
+      .select("id,status")
+      .maybeSingle();
+    if (completeErr) {
+      throw new Error(completeErr.message || "Failed to mark job completed");
+    }
+    if (!completedRow) {
+      throw new Error("Job completion update skipped because job was not in processing state");
+    }
+
+    log("job completed", { id: jobId, status: "completed", clip_count: resolvedClipIds.length });
+    log("processing completed", jobId);
+  } catch (err) {
+    const msg = formatExecError(err);
+    await sb
+      .from("video_jobs")
+      .update({
+        updated_at: new Date().toISOString(),
+        metadata: {
+          ...jobMetadata,
+          worker: {
+            ...(jobMetadata.worker || {}),
+            stage: "failed",
+            stage_updated_at: new Date().toISOString(),
+            failure_reason: msg,
           },
         },
       })
       .eq("id", jobId)
       .eq("status", "processing");
-
-    log("processing completed", jobId);
+    log("job failed", { id: jobId, error_message: msg });
+    throw err;
   } finally {
     try {
       fs.rmSync(tmpRoot, { recursive: true, force: true });

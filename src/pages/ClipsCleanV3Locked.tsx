@@ -27,7 +27,7 @@ function isPlayableUrl(url: string): boolean {
   return /^https?:\/\//i.test(trimmed);
 }
 
-export default function ClipperClean() {
+export default function ClipsCleanV3Locked() {
   const [videoUrlInput, setVideoUrlInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [message, setMessage] = useState("");
@@ -86,6 +86,7 @@ export default function ClipperClean() {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
+        <div className="mb-2 text-xs font-semibold tracking-wide text-amber-700">VERSION: V12 LOCKED CLIPS CLEAN V3 BASE</div>
         <h1 className="text-3xl font-bold tracking-tight">Alizé Clips</h1>
 
         <section className="mt-6 max-w-2xl rounded-xl border border-border/60 bg-card p-4">

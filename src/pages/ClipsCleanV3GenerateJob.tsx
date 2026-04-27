@@ -1,5 +1,6 @@
-import { useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { useEffect, useRef, useState } from "react";
+import { createVideoJobFromSourceUrl, fetchClipperState, type VideoClipRow, type VideoJobStatus } from "@/lib/mvp/videoClipperBackend";
+import { ensureVideoMvpProjectId } from "@/lib/videoMvpProject";
 
 type ClipRow = {
   id: string;
@@ -27,11 +28,30 @@ function isPlayableUrl(url: string): boolean {
   return /^https?:\/\//i.test(trimmed);
 }
 
-export default function ClipperClean() {
+function toPlayableRows(rows: VideoClipRow[]): ClipRow[] {
+  return rows
+    .map((row) => ({
+      id: row.id,
+      video_url: row.video_url ?? null,
+      start_time_sec: row.start_time_sec ?? 0,
+      end_time_sec: row.end_time_sec ?? 0,
+      created_at: row.created_at ?? null,
+    }))
+    .filter((row) => isPlayableUrl(String(row.video_url ?? "")))
+    .slice(0, 3);
+}
+
+export default function ClipsCleanV3GenerateJob() {
   const [videoUrlInput, setVideoUrlInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [clips, setClips] = useState<ClipRow[]>([]);
+  const [previousPlayableClips, setPreviousPlayableClips] = useState<ClipRow[]>([]);
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [activeJobStatus, setActiveJobStatus] = useState<VideoJobStatus | null>(null);
+  const projectId = ensureVideoMvpProjectId();
+  const pollStartedAtRef = useRef<number | null>(null);
+  const POLL_TIMEOUT_MS = 45000;
 
   const forceDownload = async (url: string, filename: string) => {
     const response = await fetch(url);
@@ -53,39 +73,84 @@ export default function ClipperClean() {
       return;
     }
 
+    setPreviousPlayableClips(clips);
     setIsLoading(true);
     setMessage("");
 
     try {
-      const { data, error } = await supabase
-        .from("video_clips")
-        .select("id, video_url, start_time_sec, end_time_sec, created_at")
-        .not("video_url", "is", null)
-        .order("created_at", { ascending: false })
-        .limit(30);
-
-      if (error) {
-        setMessage(error.message || "Failed to load clips.");
-        setClips([]);
-        return;
-      }
-
-      const rows = ((data ?? []) as ClipRow[]).filter((row) => isPlayableUrl(String(row.video_url ?? "")));
-      setClips(rows.slice(0, 3));
-      if (rows.length === 0) {
-        setMessage("No clips yet.");
-      }
+      const createdJob = await createVideoJobFromSourceUrl(projectId, trimmed);
+      setActiveJobId(createdJob.id);
+      setActiveJobStatus(createdJob.status);
+      pollStartedAtRef.current = Date.now();
     } catch {
-      setMessage("Failed to load clips.");
-      setClips([]);
-    } finally {
+      setMessage("That video could not be processed. Showing previous clips.");
+      setClips(previousPlayableClips);
       setIsLoading(false);
+      setActiveJobId(null);
+      setActiveJobStatus(null);
+      pollStartedAtRef.current = null;
     }
   };
+
+  useEffect(() => {
+    if (!activeJobId) return;
+    let cancelled = false;
+
+    const poll = async () => {
+      try {
+        const state = await fetchClipperState(projectId, activeJobId, { cacheBuster: Date.now() });
+        if (cancelled) return;
+        const status = state.latestJob?.status ?? null;
+        setActiveJobStatus(status);
+        const playableRows = toPlayableRows(state.clips);
+
+        if (playableRows.length === 3) {
+          setClips(playableRows);
+          setPreviousPlayableClips(playableRows);
+          setMessage("");
+          setIsLoading(false);
+          setActiveJobId(null);
+          setActiveJobStatus(null);
+          pollStartedAtRef.current = null;
+          return;
+        }
+
+        const timedOut =
+          Boolean(pollStartedAtRef.current) &&
+          (status === "queued" || status === "processing") &&
+          Date.now() - (pollStartedAtRef.current ?? 0) > POLL_TIMEOUT_MS;
+
+        if (status === "failed" || timedOut || status === "completed") {
+          setClips(previousPlayableClips);
+          setMessage("That video could not be processed. Showing previous clips.");
+          setIsLoading(false);
+          setActiveJobId(null);
+          setActiveJobStatus(null);
+          pollStartedAtRef.current = null;
+        }
+      } catch {
+        if (cancelled) return;
+        setClips(previousPlayableClips);
+        setMessage("That video could not be processed. Showing previous clips.");
+        setIsLoading(false);
+        setActiveJobId(null);
+        setActiveJobStatus(null);
+        pollStartedAtRef.current = null;
+      }
+    };
+
+    void poll();
+    const interval = window.setInterval(() => void poll(), 2000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [activeJobId, previousPlayableClips, projectId]);
 
   return (
     <div className="min-h-screen bg-background text-foreground">
       <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
+        <div className="mb-2 text-xs font-semibold tracking-wide text-amber-700">VERSION: V14 CLIPS CLEAN V3 GENERATE JOB</div>
         <h1 className="text-3xl font-bold tracking-tight">Alizé Clips</h1>
 
         <section className="mt-6 max-w-2xl rounded-xl border border-border/60 bg-card p-4">
@@ -105,6 +170,9 @@ export default function ClipperClean() {
           >
             {isLoading ? "Loading..." : "Generate Clips"}
           </button>
+          {isLoading || activeJobStatus === "queued" || activeJobStatus === "processing" ? (
+            <p className="mt-2 text-sm text-muted-foreground">Generating clips...</p>
+          ) : null}
           {message ? <p className="mt-2 text-sm text-muted-foreground">{message}</p> : null}
         </section>
 

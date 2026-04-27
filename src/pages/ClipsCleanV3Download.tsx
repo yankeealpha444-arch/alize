@@ -27,7 +27,7 @@ function isPlayableUrl(url: string): boolean {
   return /^https?:\/\//i.test(trimmed);
 }
 
-export default function ClipperClean() {
+export default function ClipsCleanV3Download() {
   const [videoUrlInput, setVideoUrlInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [message, setMessage] = useState("");
@@ -86,6 +86,7 @@ export default function ClipperClean() {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
+        <div className="mb-2 text-xs font-semibold tracking-wide text-amber-700">VERSION: V12 CLIPS CLEAN V3 DOWNLOAD</div>
         <h1 className="text-3xl font-bold tracking-tight">Alizé Clips</h1>
 
         <section className="mt-6 max-w-2xl rounded-xl border border-border/60 bg-card p-4">
@@ -134,7 +135,7 @@ export default function ClipperClean() {
                           onClick={() => void forceDownload(clip.video_url ?? directUrl, `alize-clip-${idx + 1}.mp4`)}
                           className="inline-flex items-center rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-secondary"
                         >
-                          Download MP4
+                          Download MP4 for YouTube
                         </button>
                       ) : (
                         <span className="text-xs text-muted-foreground">Clip still processing</span>

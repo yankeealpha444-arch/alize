@@ -1,3 +1,9 @@
+// AI SAFE FILE
+// UI LOCKED
+// DO NOT MODIFY LAYOUT, STYLE, STRUCTURE, ROUTES, COPY, OR TEMPLATE
+// ONLY FIX THE SPECIFIC REQUESTED LOGIC
+// UI changes require: "UI change approved"
+
 import React, { useState, useEffect } from "react";
 import { useParams } from "react-router-dom";
 import VideoClipperMVP from "@/components/mvp/VideoClipperMVP";

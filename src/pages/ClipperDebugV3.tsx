@@ -36,7 +36,18 @@ function isPlayableUrl(url: string): boolean {
   return /^https?:\/\//i.test(trimmed);
 }
 
-export default function ClipperUserV2FeedbackFix() {
+function deriveNoClipReason(errorMessage: string | null, clipCount: number): string {
+  if (errorMessage) {
+    const lower = errorMessage.toLowerCase();
+    if (lower.includes("yt-dlp") && (lower.includes("timeout") || lower.includes("timed out"))) return "yt-dlp timeout";
+    if (lower.includes("processvideofromurl") || lower.includes("ffmpeg")) return "processVideoFromUrl failed";
+    return errorMessage;
+  }
+  if (clipCount === 0) return "no clips generated";
+  return "no clips generated";
+}
+
+export default function ClipperDebugV3() {
   const [videoUrlInput, setVideoUrlInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [message, setMessage] = useState("");
@@ -49,13 +60,18 @@ export default function ClipperUserV2FeedbackFix() {
   const [playedByClipId, setPlayedByClipId] = useState<Record<string, true>>({});
   const [watchMarksByClipId, setWatchMarksByClipId] = useState<Record<string, Record<number, true>>>({});
   const [showOriginal, setShowOriginal] = useState(false);
+  const [debugErrorMessage, setDebugErrorMessage] = useState<string | null>(null);
+  const [debugClipCount, setDebugClipCount] = useState(0);
+  const [debugHasVideoUrl, setDebugHasVideoUrl] = useState(false);
+  const [debugNoClipReason, setDebugNoClipReason] = useState<string | null>(null);
+  const [lastJobId, setLastJobId] = useState<string | null>(null);
   const firstSelectedTrackedRef = useRef(false);
   const projectId = ensureVideoMvpProjectId();
   const pollStartedAtRef = useRef<number | null>(null);
   const POLL_TIMEOUT_MS = 45000;
 
   useEffect(() => {
-    void trackEvent("page_view", projectId, "lsa_clips_clean_mvp");
+    void trackEvent("page_view", projectId, "lsa_clips_debug_v3");
   }, [projectId]);
 
   const cardSlots = useMemo(() => [clips[0] ?? null, clips[1] ?? null, clips[2] ?? null], [clips]);
@@ -114,21 +130,30 @@ export default function ClipperUserV2FeedbackFix() {
     setDownloadsByClipId({});
     setPlayedByClipId({});
     setWatchMarksByClipId({});
+    setDebugErrorMessage(null);
+    setDebugClipCount(0);
+    setDebugHasVideoUrl(false);
+    setDebugNoClipReason(null);
     firstSelectedTrackedRef.current = false;
-    void trackEvent("generation_started", projectId, "lsa_clips_generate");
+    void trackEvent("generation_started", projectId, "lsa_clips_debug_generate");
 
     try {
       const created = await createVideoJobFromSourceUrl(projectId, trimmed);
+      console.log("[debug] job created", { id: created.id, status: created.status });
+      setLastJobId(created.id);
       setClips([]);
       setActiveJobId(created.id);
       setActiveJobStatus(created.status);
       pollStartedAtRef.current = Date.now();
-    } catch {
-      setMessage("Something went wrong. Try again.");
+    } catch (error) {
+      const fallback = error instanceof Error ? error.message : "processVideoFromUrl failed";
+      setDebugErrorMessage(fallback);
+      setDebugNoClipReason(deriveNoClipReason(fallback, 0));
+      setMessage(fallback);
       setActiveJobId(null);
       setActiveJobStatus(null);
       setIsLoading(false);
-      void trackEvent("generation_failed", projectId, "lsa_clips_generation_failed");
+      void trackEvent("generation_failed", projectId, "lsa_clips_debug_generation_failed");
     }
   };
 
@@ -141,13 +166,23 @@ export default function ClipperUserV2FeedbackFix() {
         const state = await fetchClipperState(projectId, activeJobId, { cacheBuster: Date.now() });
         if (cancelled) return;
         const status = state.latestJob?.status ?? null;
-        setActiveJobStatus(status);
-
+        const errorMessage = state.latestJob?.error_message ?? null;
         const playable = toClipRows(state.clips);
+        const hasVideoUrl = playable.some((clip) => Boolean(clip.video_url && clip.video_url.trim()));
+
+        setActiveJobStatus(status);
+        setDebugErrorMessage(errorMessage);
+        setDebugClipCount(playable.length);
+        setDebugHasVideoUrl(hasVideoUrl);
+
+        console.log("[debug] job status", { id: activeJobId, status });
+        console.log("[debug] error_message", errorMessage);
+
         if (playable.length === 3) {
           setClips(playable);
           setIsLoading(false);
           setMessage("");
+          setDebugNoClipReason(null);
           setActiveJobId(null);
           setActiveJobStatus(null);
           pollStartedAtRef.current = null;
@@ -159,25 +194,31 @@ export default function ClipperUserV2FeedbackFix() {
           (status === "queued" || status === "processing") &&
           Date.now() - (pollStartedAtRef.current ?? 0) > POLL_TIMEOUT_MS;
 
-        if (status === "failed" || timedOut) {
-          setMessage("Something went wrong. Try again.");
-          setClips([]);
+        if (status === "failed" || timedOut || status === "completed") {
+          const reason = timedOut ? "yt-dlp timeout" : deriveNoClipReason(errorMessage, playable.length);
+          setDebugNoClipReason(reason);
+          setMessage(reason);
+          setClips(playable);
           setIsLoading(false);
           setActiveJobId(null);
           setActiveJobStatus(null);
           pollStartedAtRef.current = null;
-          void trackEvent("generation_failed", projectId, "lsa_clips_poll_failed");
-          return;
+          if (status === "failed") {
+            void trackEvent("generation_failed", projectId, "lsa_clips_debug_poll_failed");
+          }
         }
-      } catch {
+      } catch (error) {
         if (!cancelled) {
-          setMessage("Something went wrong. Try again.");
+          const fallback = error instanceof Error ? error.message : "processVideoFromUrl failed";
+          setDebugErrorMessage(fallback);
+          setDebugNoClipReason(deriveNoClipReason(fallback, 0));
+          setMessage(fallback);
           setClips([]);
           setIsLoading(false);
           setActiveJobId(null);
           setActiveJobStatus(null);
           pollStartedAtRef.current = null;
-          void trackEvent("generation_failed", projectId, "lsa_clips_poll_error");
+          void trackEvent("generation_failed", projectId, "lsa_clips_debug_poll_error");
         }
       }
     };
@@ -193,7 +234,7 @@ export default function ClipperUserV2FeedbackFix() {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
-        <div className="mb-2 text-xs font-semibold tracking-wide text-amber-700">VERSION: V2 CLEAN CLIPPER MVP</div>
+        <div className="mb-2 text-xs font-semibold tracking-wide text-amber-700">VERSION: V3 DEBUG PIPELINE</div>
         <h1 className="text-3xl font-bold tracking-tight">LSA Clips</h1>
         <p className="mt-1 text-sm text-muted-foreground">Paste a video link and get clips instantly</p>
 
@@ -228,6 +269,15 @@ export default function ClipperUserV2FeedbackFix() {
             <p className="mt-2 text-sm text-muted-foreground">Generating clips...</p>
           ) : null}
           {message ? <p className="mt-2 text-sm text-muted-foreground">{message}</p> : null}
+
+          <div className="mt-3 rounded-md border border-border/60 p-2 text-xs text-muted-foreground">
+            <p>Job created: {lastJobId ?? "-"}</p>
+            <p>Job status: {activeJobStatus ?? "idle"}</p>
+            <p>error_message: {debugErrorMessage ?? "-"}</p>
+            <p>Worker clips returned: {debugClipCount}</p>
+            <p>Worker video_url exists: {debugHasVideoUrl ? "yes" : "no"}</p>
+            {debugNoClipReason ? <p>No clips reason: {debugNoClipReason}</p> : null}
+          </div>
         </section>
 
         {clips.length > 0 ? (

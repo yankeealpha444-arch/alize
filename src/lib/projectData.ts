@@ -317,6 +317,16 @@ export function getMvpCustomizations(projectId: string = "default"): MvpCustomiz
   return getProjectData(projectId).mvpCustomizations;
 }
 
+export function rollbackToVersion(version: number, projectId: string = "default"): boolean {
+  const d = getProjectData(projectId);
+  const target = d.versions.find((v) => v.version === version);
+  if (!target?.snapshot) return false;
+  d.mvpCustomizations = { ...target.snapshot };
+  saveProjectData(d, projectId);
+  addVersion(`Rollback to V${version}`, "Versions", projectId);
+  return true;
+}
+
 export function emptyGrowthState(): GrowthProductState {
   return {
     channelName: "",

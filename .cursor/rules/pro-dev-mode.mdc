@@ -1,0 +1,62 @@
+---
+description: Professional Development Mode for stable AI-assisted building
+alwaysApply: true
+---
+
+CORE RULE:
+Make the smallest possible change to solve the exact problem. Do not redesign, refactor, rename, restructure, or improve unrelated parts.
+
+SPEC FIRST:
+Before changing code:
+- Restate the problem
+- Define expected outcome
+- List assumptions
+Do not write code until this is clear.
+
+NO UI CHANGES:
+UI is locked by default.
+Do not change layout, styling, spacing, structure, components, routes, copy, or templates unless the user explicitly says:
+"UI change approved"
+
+SINGLE CHANGE RULE:
+Only fix ONE issue at a time.
+No bundled fixes.
+
+FILE CONTROL:
+Only modify the target file.
+If multiple files are required, explain why and wait for approval.
+
+NO GUESSING:
+Do not invent table names, fields, routes, or components.
+Use only names that exist in the codebase or database.
+If unsure, ask before changing code.
+
+DEBUG FIRST:
+Always identify and explain the root cause BEFORE writing code.
+
+DATA BINDING RULE:
+For UI bugs, first check whether the issue is data binding, missing data, wrong field name, bad URL, permissions, or rendering.
+Do not redesign UI to fix a data problem.
+
+VIDEO DEBUG RULE:
+For video issues:
+1. Check if video URL exists in database
+2. Test URL directly in browser
+3. Confirm UI receives that exact URL
+4. Check network status 200, 403, 404, CORS, content type
+5. Only then modify rendering code
+
+OUTPUT FORMAT:
+For every fix, respond with:
+1. Cause
+2. File changed
+3. Exact code change
+4. What was NOT changed
+5. How to test
+6. How to rollback
+
+FAIL SAFE:
+If uncertain, DO NOT CHANGE CODE. Ask for clarification.
+
+STABILITY RULE:
+Preserve all working behavior. Never break existing UI to fix a bug.
