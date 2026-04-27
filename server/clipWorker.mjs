@@ -44,15 +44,6 @@ if (!supabaseUrl || !supabaseKey) {
 const sb = createClient(supabaseUrl, supabaseKey);
 const TRACE_JOB_ID = process.env.CLIP_WORKER_TRACE_JOB_ID || "a3a61c3a-6e47-48e7-b83b-bd6845c91c4f";
 
-function toFailureMessage(rawMessage) {
-  const msg = String(rawMessage || "").trim();
-  if (!msg) return "Unknown worker failure.";
-  if (msg.includes("Step timeout after") && msg.toLowerCase().includes("yt-dlp")) {
-    return "YouTube download timed out. Try another public shorter video.";
-  }
-  return msg;
-}
-
 async function processNextJob() {
   const filters = {
     claim_statuses: ["queued", "failed"],
@@ -110,7 +101,7 @@ async function processNextJob() {
       const metadata = row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata) ? row.metadata : {};
       const retries = Number(metadata.worker_retry_count || 0) + 1;
       if (retries >= 3) {
-        const terminalError = "YouTube download timed out. Try another public shorter video.";
+        const terminalError = "Step timeout: worker stale processing recovery";
         const { error: failErr } = await sb
           .from("video_jobs")
           .update({
@@ -260,7 +251,7 @@ async function processNextJob() {
     }
   } catch (e) {
     const raw = e instanceof Error ? e.message : String(e);
-    const msg = toFailureMessage(raw);
+    const msg = String(raw || "").trim() || "Unknown worker failure.";
     console.error("[clipper-worker] processing failed", msg);
     console.error("[clipper-worker][job failed]", {
       jobId: claimed.id,

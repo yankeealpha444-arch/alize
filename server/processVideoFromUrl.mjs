@@ -334,7 +334,7 @@ async function ffprobeDurationSec(filePath) {
  */
 export async function processVideoFromUrl(job) {
   const trace = Boolean(arguments[1]?.trace);
-  const YTDLP_TIMEOUT_MS = 180000;
+  const YTDLP_TIMEOUT_MS = 300000;
   const FFMPEG_CLIP_TIMEOUT_MS = 90000;
   const STORAGE_DOWNLOAD_TIMEOUT_MS = 120000;
   const FFPROBE_TIMEOUT_MS = 120000;

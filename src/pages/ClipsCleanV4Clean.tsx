@@ -120,11 +120,12 @@ export default function ClipsCleanV4Clean() {
 
       const status = String(jobRes.data.status || "");
       const errorMessage = String(jobRes.data.error_message || "");
+      const workerStage = String((jobRes.data.metadata && jobRes.data.metadata.worker && jobRes.data.metadata.worker.stage) || "");
       const workerPipeline = String((jobRes.data.metadata && jobRes.data.metadata.worker && jobRes.data.metadata.worker.pipeline) || "");
       console.log("[clean-v4] job status", status);
       console.log("[clean-v4] job error_message", errorMessage || null);
-      console.log("[clean-v4] current stage", workerPipeline || status);
-      setProgressStage(workerPipeline || status);
+      console.log("[clean-v4] current stage", workerStage || workerPipeline || status);
+      setProgressStage(workerStage || workerPipeline || status);
 
       const clipsRes = await supabase
         .from("video_clips")
@@ -162,7 +163,7 @@ export default function ClipsCleanV4Clean() {
         Date.now() - (pollStartedAtRef.current ?? 0) > POLL_TIMEOUT_MS;
 
       if (timedOut && (status === "queued" || status === "processing")) {
-        setMessage("Processing is taking longer than expected...");
+        setMessage("Still processing: yt-dlp may take longer than 3 minutes");
       }
 
       if (status === "failed") {
@@ -172,6 +173,15 @@ export default function ClipsCleanV4Clean() {
         pollStartedAtRef.current = null;
         setProgressStage("failed");
         setMessage(errorMessage || (timedOut ? "Job timed out while processing this video." : "That video could not be processed."));
+        return;
+      }
+
+      if (status === "completed" && playableRows.length < 3) {
+        setClips([]);
+        setIsReady(false);
+        setIsLoading(false);
+        setProgressStage("completed");
+        setMessage("Completed job but clips missing");
       }
     };
 
