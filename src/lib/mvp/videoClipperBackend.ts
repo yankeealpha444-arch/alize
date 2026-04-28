@@ -324,6 +324,9 @@ function mapServiceError(message: string | undefined, fallback: string): string 
   if (m.includes("invalid api key") || m.includes("apikey") || m.includes("api key")) {
     return "Video service is not configured correctly yet. Please try again later.";
   }
+  if (m.includes("youtube_stream_410_source_unusable")) {
+    return "This YouTube video could not be processed. Try another link or upload a video file.";
+  }
   return message || fallback;
 }
 

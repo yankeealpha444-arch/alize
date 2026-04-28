@@ -469,6 +469,17 @@ export async function processVideoFromUrl(job) {
       jobMetadata = await updateJobStage(sb, jobId, jobMetadata, "upload-source-download-complete");
       step(4, "download command completed", { mode: "storage-download", inputPath: inputMediaSource });
       log("upload video downloaded", inputMediaSource);
+    } else if (sourceKind === "remote_url") {
+      if (!pageUrl) throw new Error("Job has no source_url for remote_url processing");
+      step(3, "download command started", { mode: "remote-url-direct", source_url: pageUrl });
+      jobMetadata = await updateJobStage(sb, jobId, jobMetadata, "remote-url-direct", {
+        source_url: pageUrl,
+        strategy: "direct-media-url",
+      });
+      inputMediaSource = pageUrl;
+      sourceIsLocalFile = false;
+      step(4, "download command completed", { mode: "remote-url-direct", inputMediaSource });
+      log("remote_url direct media source", { jobId, source_url: pageUrl });
     } else {
       if (!pageUrl) throw new Error("Job has no source_url / youtube_video_id");
       step(3, "download command started", { mode: "yt-dlp", source_url: pageUrl });

@@ -5,7 +5,7 @@ import { useClips } from "@/hooks/useClips";
 import { flowStore } from "@/store/flowStore";
 import { ensureVideoMvpProjectId } from "../../../src/lib/videoMvpProject";
 import { trackEvent } from "../../../src/lib/trackingEvents";
-import { createVideoJobFromSourceUrl } from "@/lib/mvp/videoClipperBackend";
+import { createVideoJobFromSourceUrl, uploadSourceVideoAndCreateJob } from "@/lib/mvp/videoClipperBackend";
 
 function formatTime(sec: number): string {
   if (!Number.isFinite(sec)) return "0s";
@@ -39,6 +39,7 @@ export default function LinkClipperMvp() {
   const { clips, isLoading, latestJobStatus, latestJobError } = useClips(activeJobId, false, true);
 
   const [link, setLink] = useState(flowStore.get().sourceInput ?? "");
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [message, setMessage] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [shouldScrollToResults, setShouldScrollToResults] = useState(false);
@@ -137,6 +138,33 @@ export default function LinkClipperMvp() {
     }
   };
 
+  const handleUploadGenerate = async () => {
+    if (!selectedFile) {
+      setMessage("Choose a video file to upload");
+      return;
+    }
+    setIsGenerating(true);
+    setMessage("");
+    try {
+      const pid = ensureVideoMvpProjectId();
+      const createdJob = await uploadSourceVideoAndCreateJob(pid, selectedFile);
+      localStorage.setItem(`alize_video_job_id_${pid}`, createdJob.id);
+      localStorage.setItem(`alize_clips_source_url_${pid}`, selectedFile.name);
+      setActiveJobId(createdJob.id);
+      await queryClient.invalidateQueries({ queryKey: ["clips", pid] });
+      await queryClient.refetchQueries({
+        queryKey: ["clips", pid, createdJob.id],
+        type: "active",
+      });
+      pendingGeneratedTrack.current = true;
+      setShouldScrollToResults(true);
+    } catch (err) {
+      setMessage(err instanceof Error && err.message ? err.message : "Could not process uploaded file.");
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
   const isQueuedOrProcessing = latestJobStatus === "queued" || latestJobStatus === "processing";
   const isFailed = latestJobStatus === "failed" || Boolean(message);
   const hasNoJob = !activeJobId && !latestJobStatus;
@@ -201,6 +229,23 @@ export default function LinkClipperMvp() {
           >
             {isGenerating ? "Generating..." : "Generate Clips"}
           </button>
+
+          <div className="mt-4">
+            <input
+              type="file"
+              accept="video/mp4,video/*"
+              onChange={(e) => setSelectedFile(e.target.files?.[0] ?? null)}
+              className="w-full rounded-md border border-border bg-background px-3 py-2.5 text-sm text-foreground"
+            />
+            <button
+              type="button"
+              onClick={() => void handleUploadGenerate()}
+              disabled={isGenerating || !selectedFile}
+              className="mt-2 inline-flex w-full items-center justify-center rounded-md border border-border px-4 py-2.5 text-sm font-semibold text-foreground disabled:opacity-60"
+            >
+              {isGenerating ? "Generating..." : "Upload and Generate Clips"}
+            </button>
+          </div>
 
           {message ? (
             <p className="mt-3 text-sm text-foreground">
