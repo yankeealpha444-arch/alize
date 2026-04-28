@@ -1,3 +1,5 @@
+console.log("V26 BACKEND FILE ACTIVE");
+
 import { supabase } from "@/integrations/supabase/client";
 import { isVideoContentUrlInput } from "@/lib/mvp/videoClipperDetection";
 import { STORAGE_BUCKET_CLIP_EXPORTS, STORAGE_BUCKET_VIDEO_UPLOADS } from "@/lib/mvp/storageBuckets";

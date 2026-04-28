@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import Upload from "./pages/Upload.tsx";
 import Index from "./pages/Index.tsx";
+import LinkClipperMvp from "./pages/LinkClipperMvp.tsx";
 import Preview from "./pages/Preview.tsx";
 import Dashboard from "./pages/Dashboard.tsx";
 import NotFound from "./pages/NotFound.tsx";
@@ -19,6 +20,7 @@ const App = () => (
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<Upload />} />
+          <Route path="/link-clipper" element={<LinkClipperMvp />} />
           <Route path="/clips" element={<Index />} />
           <Route path="/preview" element={<Preview />} />
           <Route path="/dashboard" element={<Dashboard />} />

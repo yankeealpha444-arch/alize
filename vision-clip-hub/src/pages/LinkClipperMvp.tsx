@@ -33,6 +33,7 @@ function isValidPublicVideoUrl(value: string): boolean {
 }
 
 export default function LinkClipperMvp() {
+  console.log("V26 BUILD ACTIVE");
   const queryClient = useQueryClient();
 
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
@@ -154,6 +155,7 @@ export default function LinkClipperMvp() {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
+        <div style={{ color: "red", fontWeight: "bold" }}>V26 BUILD ACTIVE</div>
         <div className="mb-3 text-xs font-semibold text-amber-700">LIVE FILE: LinkClipperMvp</div>
         <div className="max-w-2xl">
           <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
