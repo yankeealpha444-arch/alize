@@ -10,6 +10,10 @@ function sendJson(res, statusCode, body) {
   res.end(JSON.stringify(body));
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function formatExecError(err) {
   if (!err) return "unknown_worker_failure";
   if (err instanceof Error) {
@@ -74,6 +78,34 @@ export default async function handler(req, res) {
   }
 
   const sb = createClient(supabaseUrl, supabaseKey);
+  const readTerminalState = async () => {
+    const { data: latest } = await sb.from("video_jobs").select("status,error_message").eq("id", jobId).maybeSingle();
+    const latestStatus = latest?.status ?? null;
+    if (latestStatus === "completed") {
+      return {
+        ok: true,
+        job_id: jobId,
+        status: "completed",
+        error_message: latest?.error_message || null,
+      };
+    }
+    if (latestStatus === "failed") {
+      const failedMessage = latest?.error_message || "job_failed_without_error_message";
+      return {
+        ok: false,
+        job_id: jobId,
+        status: "failed",
+        error_message: failedMessage,
+        error: failedMessage,
+      };
+    }
+    return {
+      ok: true,
+      job_id: jobId,
+      status: "processing",
+      error_message: latest?.error_message || null,
+    };
+  };
   const { data: job, error: fetchErr } = await sb.from("video_jobs").select("*").eq("id", jobId).maybeSingle();
   if (fetchErr) {
     return sendJson(res, 500, {
@@ -108,24 +140,9 @@ export default async function handler(req, res) {
   }
 
   if (job.status === "processing") {
-    const staleMsg = "job_stuck_in_processing_without_terminal_result";
-    await sb
-      .from("video_jobs")
-      .update({
-        status: "failed",
-        error: staleMsg,
-        error_message: staleMsg,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", jobId)
-      .eq("status", "processing");
-    return sendJson(res, 200, {
-      ok: false,
-      job_id: jobId,
-      status: "failed",
-      error_message: staleMsg,
-      error: staleMsg,
-    });
+    await sleep(1200);
+    const terminalOrActive = await readTerminalState();
+    return sendJson(res, 200, terminalOrActive);
   }
 
   if (job.status !== "queued") {
@@ -153,40 +170,9 @@ export default async function handler(req, res) {
   }
 
   if (!claimed) {
-    const { data: latest } = await sb.from("video_jobs").select("status,error_message").eq("id", jobId).maybeSingle();
-    if (latest?.status === "completed") {
-      return sendJson(res, 200, {
-        ok: true,
-        job_id: jobId,
-        status: latest.status,
-        error_message: latest.error_message || null,
-      });
-    }
-    if (latest?.status === "processing") {
-      const staleMsg = "job_claimed_by_other_runner_but_not_terminal";
-      await sb
-        .from("video_jobs")
-        .update({
-          status: "failed",
-          error: staleMsg,
-          error_message: staleMsg,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", jobId)
-        .eq("status", "processing");
-      return sendJson(res, 200, {
-        ok: false,
-        job_id: jobId,
-        status: "failed",
-        error_message: staleMsg,
-        error: staleMsg,
-      });
-    }
-    return sendJson(res, 200, {
-      ok: false,
-      error: "job_claim_race_lost",
-      job_id: jobId,
-    });
+    await sleep(1200);
+    const terminalOrActive = await readTerminalState();
+    return sendJson(res, 200, terminalOrActive);
   }
 
   try {
