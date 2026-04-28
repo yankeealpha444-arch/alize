@@ -122,6 +122,21 @@ try {
       if (finalStatus === "failed" && (!errorMessage || String(errorMessage).trim() === "")) {
         missing.push("failed_without_error_message");
       }
+      if (finalStatus === "failed") {
+        const failedHeadingCount = await page.getByText("Failed to generate clips", { exact: false }).count();
+        if (failedHeadingCount < 1) {
+          missing.push("missing_visible_failed_heading");
+        } else {
+          lastSuccessfulStep = "failed_heading_visible";
+        }
+
+        const pageText = (await page.textContent("body")) || "";
+        if (!pageText.includes(String(errorMessage))) {
+          missing.push("missing_visible_failed_error_message");
+        } else {
+          lastSuccessfulStep = "failed_error_message_visible";
+        }
+      }
       if (["completed", "failed"].includes(finalStatus)) {
         lastSuccessfulStep = `terminal_status_seen:${finalStatus}`;
       }
