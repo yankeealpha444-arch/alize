@@ -492,7 +492,7 @@ export async function createVideoJobFromSourceUrl(projectId: string, sourceUrl: 
       status: row.status,
     });
     console.log("[job-created]", { id: row.id, status: row.status });
-    void triggerAutoWorkerTick(row.id);
+    console.log("[clipper][backend] auto-worker-trigger disabled for stable mode", { jobId: row.id });
     return row;
   } catch (e) {
     const msg = e instanceof Error ? e.message : undefined;
