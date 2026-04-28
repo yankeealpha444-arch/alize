@@ -435,7 +435,40 @@ export async function uploadSourceVideoAndCreateJob(
       status: row.status,
       sourcePath: row.source_path,
     });
-    console.log("[clipper] upload job queued for worker", { jobId: row.id, status: row.status });
+    await fetch("/api/process-job", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jobId: row.id })
+    })
+      .then(async (res) => {
+        const text = await res.text();
+        let json: unknown = null;
+        try {
+          json = text ? JSON.parse(text) : null;
+        } catch {
+          json = {
+            ok: false,
+            jobId: row.id,
+            final_status: "failed",
+            error_message: text || `HTTP ${res.status}`,
+          };
+        }
+        console.log("[process-job response]", json);
+        if (json && typeof json === "object" && "ok" in json && json.ok === false) {
+          const errMsg =
+            (typeof json.error_message === "string" && json.error_message.trim()) ||
+            (typeof json.error === "string" && json.error.trim()) ||
+            `process-job failed (HTTP ${res.status})`;
+          throw new Error(errMsg);
+        }
+        if (!res.ok) {
+          console.error("[process-job error]", { status: res.status, text });
+        }
+      })
+      .catch(err => {
+        console.error("[process-job error]", err);
+        throw err;
+      });
     return row;
   } catch (e) {
     const msg = e instanceof Error ? e.message : undefined;
