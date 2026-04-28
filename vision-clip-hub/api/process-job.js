@@ -108,11 +108,23 @@ export default async function handler(req, res) {
   }
 
   if (job.status === "processing") {
+    const staleMsg = "job_stuck_in_processing_without_terminal_result";
+    await sb
+      .from("video_jobs")
+      .update({
+        status: "failed",
+        error: staleMsg,
+        error_message: staleMsg,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", jobId)
+      .eq("status", "processing");
     return sendJson(res, 200, {
-      ok: true,
+      ok: false,
       job_id: jobId,
-      status: "processing",
-      error_message: job.error_message || null,
+      status: "failed",
+      error_message: staleMsg,
+      error: staleMsg,
     });
   }
 
@@ -142,12 +154,32 @@ export default async function handler(req, res) {
 
   if (!claimed) {
     const { data: latest } = await sb.from("video_jobs").select("status,error_message").eq("id", jobId).maybeSingle();
-    if (latest?.status === "completed" || latest?.status === "processing") {
+    if (latest?.status === "completed") {
       return sendJson(res, 200, {
         ok: true,
         job_id: jobId,
         status: latest.status,
         error_message: latest.error_message || null,
+      });
+    }
+    if (latest?.status === "processing") {
+      const staleMsg = "job_claimed_by_other_runner_but_not_terminal";
+      await sb
+        .from("video_jobs")
+        .update({
+          status: "failed",
+          error: staleMsg,
+          error_message: staleMsg,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", jobId)
+        .eq("status", "processing");
+      return sendJson(res, 200, {
+        ok: false,
+        job_id: jobId,
+        status: "failed",
+        error_message: staleMsg,
+        error: staleMsg,
       });
     }
     return sendJson(res, 200, {
@@ -160,10 +192,39 @@ export default async function handler(req, res) {
   try {
     await processVideoFromUrl(claimed, { trace: false });
     const { data: finalRow } = await sb.from("video_jobs").select("status,error_message").eq("id", jobId).maybeSingle();
+    if (finalRow?.status === "failed") {
+      return sendJson(res, 200, {
+        ok: false,
+        job_id: jobId,
+        status: "failed",
+        error_message: finalRow.error_message || "processor_failed_without_message",
+        error: finalRow.error_message || "processor_failed_without_message",
+      });
+    }
+    if (finalRow?.status !== "completed") {
+      const msg = `processor_non_terminal_status_${finalRow?.status || "unknown"}`;
+      await sb
+        .from("video_jobs")
+        .update({
+          status: "failed",
+          error: msg,
+          error_message: msg,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", jobId)
+        .eq("status", "processing");
+      return sendJson(res, 200, {
+        ok: false,
+        job_id: jobId,
+        status: "failed",
+        error_message: msg,
+        error: msg,
+      });
+    }
     return sendJson(res, 200, {
       ok: true,
       job_id: jobId,
-      status: finalRow?.status === "completed" ? "completed" : "processing",
+      status: "completed",
       error_message: finalRow?.error_message || null,
     });
   } catch (err) {

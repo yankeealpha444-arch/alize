@@ -132,13 +132,16 @@ try {
       if (processJobHttpStatus !== 200) {
         missing.push(`process_job_http_status_${processJobHttpStatus}`);
       }
-      if (!["processing", "completed"].includes(finalStatus)) {
+      if (!["completed", "failed"].includes(finalStatus)) {
         missing.push(`invalid_final_status:${String(finalStatus)}`);
       }
       if (!jobId || (createdJobId && jobId !== createdJobId)) {
         missing.push(`job_id_mismatch:created=${createdJobId || "unknown"} response=${jobId || "missing"}`);
       }
-      if (["completed", "processing"].includes(finalStatus)) {
+      if (finalStatus === "failed" && (!errorMessage || String(errorMessage).trim() === "")) {
+        missing.push("failed_without_error_message");
+      }
+      if (["completed", "failed"].includes(finalStatus)) {
         lastSuccessfulStep = `terminal_status_seen:${finalStatus}`;
       }
     }
