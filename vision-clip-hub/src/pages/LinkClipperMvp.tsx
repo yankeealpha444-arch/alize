@@ -36,7 +36,7 @@ export default function LinkClipperMvp() {
   const queryClient = useQueryClient();
 
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
-  const { clips, isLoading, latestJobStatus } = useClips(activeJobId, false, true);
+  const { clips, isLoading, latestJobStatus, latestJobError } = useClips(activeJobId, false, true);
 
   const [link, setLink] = useState(flowStore.get().sourceInput ?? "");
   const [message, setMessage] = useState("");
@@ -138,6 +138,8 @@ export default function LinkClipperMvp() {
   };
 
   const isQueuedOrProcessing = latestJobStatus === "queued" || latestJobStatus === "processing";
+  const isFailed = latestJobStatus === "failed";
+  const hasNoJob = !activeJobId && !latestJobStatus;
   const displayClips = clips
     .filter((clip) => !(clip.video_url?.includes("interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4")))
     .slice(0, 3);
@@ -211,7 +213,18 @@ export default function LinkClipperMvp() {
             </p>
           ) : null}
 
-          {displayClips.length === 0 && !isQueuedOrProcessing && !isGenerating ? (
+          {isFailed ? (
+            <div className="rounded-md border border-border/60 bg-card p-3">
+              <p className="text-sm font-semibold text-foreground">
+                Failed to generate clips
+              </p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {latestJobError?.trim() || "Unknown error"}
+              </p>
+            </div>
+          ) : null}
+
+          {displayClips.length === 0 && !isQueuedOrProcessing && !isGenerating && hasNoJob ? (
             <p className="text-sm text-muted-foreground">
               No clips yet. Paste a video link to get started.
             </p>
