@@ -3,6 +3,9 @@ import { chromium } from "@playwright/test";
 
 const liveUrl = process.argv[2];
 const testVideoUrl = "https://www.youtube.com/watch?v=JSW8otExjgI";
+const youtubeBlockedDiagnostic = "youtube_stream_410_source_unusable";
+const youtubeFriendlyFailureMessage =
+  "This YouTube video could not be processed. Try another link or upload a video file.";
 
 if (!liveUrl) {
   console.error("[live-verify] FAIL: Missing URL argument.");
@@ -131,7 +134,17 @@ try {
         }
 
         const pageText = (await page.textContent("body")) || "";
-        if (!pageText.includes(String(errorMessage))) {
+        const rawErrorMessage = String(errorMessage || "");
+        const pageShowsRawError = rawErrorMessage.trim().length > 0 && pageText.includes(rawErrorMessage);
+        const pageShowsYoutubeBlockedRaw = pageText.includes(youtubeBlockedDiagnostic);
+        const pageShowsYoutubeFriendly = pageText.includes(youtubeFriendlyFailureMessage);
+        const isYoutubeBlockedFailure =
+          rawErrorMessage.includes(youtubeBlockedDiagnostic) || rawErrorMessage === youtubeFriendlyFailureMessage;
+        const hasAcceptedVisibleError = isYoutubeBlockedFailure
+          ? pageShowsRawError || pageShowsYoutubeBlockedRaw || pageShowsYoutubeFriendly
+          : pageShowsRawError;
+
+        if (!hasAcceptedVisibleError) {
           missing.push("missing_visible_failed_error_message");
         } else {
           lastSuccessfulStep = "failed_error_message_visible";
