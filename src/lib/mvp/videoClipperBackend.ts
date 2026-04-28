@@ -504,8 +504,24 @@ export async function createVideoJobFromSourceUrl(projectId: string, sourceUrl: 
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ jobId: row.id })
     })
-      .then(res => res.json())
-      .then(json => console.log("[process-job response]", json))
+      .then(async (res) => {
+        const text = await res.text();
+        let json: unknown = null;
+        try {
+          json = text ? JSON.parse(text) : null;
+        } catch {
+          json = {
+            ok: false,
+            jobId: row.id,
+            final_status: "failed",
+            error_message: text || `HTTP ${res.status}`,
+          };
+        }
+        console.log("[process-job response]", json);
+        if (!res.ok) {
+          console.error("[process-job error]", { status: res.status, text });
+        }
+      })
       .catch(err => console.error("[process-job error]", err));
     return row;
   } catch (e) {
