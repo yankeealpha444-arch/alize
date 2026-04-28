@@ -78,10 +78,57 @@ export default async function handler(req, res) {
   }
 
   const sb = createClient(supabaseUrl, supabaseKey);
+  const requiredClipCount = 3;
+  const readJobRow = async () => {
+    const { data: latest, error } = await sb.from("video_jobs").select("*").eq("id", jobId).maybeSingle();
+    if (error) {
+      throw new Error(error.message || "job_refetch_failed");
+    }
+    if (!latest) {
+      throw new Error("job_not_found_after_processing");
+    }
+    return latest;
+  };
+  const failJobIfProcessing = async (message) => {
+    await sb
+      .from("video_jobs")
+      .update({
+        status: "failed",
+        error: message,
+        error_message: message,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", jobId)
+      .eq("status", "processing");
+  };
   const readTerminalState = async () => {
-    const { data: latest } = await sb.from("video_jobs").select("status,error_message").eq("id", jobId).maybeSingle();
+    const latest = await readJobRow();
     const latestStatus = latest?.status ?? null;
     if (latestStatus === "completed") {
+      const { count: clipCount } = await sb
+        .from("video_clips")
+        .select("id", { count: "exact", head: true })
+        .eq("job_id", jobId);
+      if (!clipCount || clipCount < requiredClipCount) {
+        const msg = `processor_completed_without_required_clips_${clipCount || 0}_of_${requiredClipCount}`;
+        await sb
+          .from("video_jobs")
+          .update({
+            status: "failed",
+            error: msg,
+            error_message: msg,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", jobId)
+          .eq("status", "completed");
+        return {
+          ok: false,
+          job_id: jobId,
+          status: "failed",
+          error_message: msg,
+          error: msg,
+        };
+      }
       return {
         ok: true,
         job_id: jobId,
@@ -104,6 +151,34 @@ export default async function handler(req, res) {
       job_id: jobId,
       status: "processing",
       error_message: latest?.error_message || null,
+    };
+  };
+  const processClaimedOrProcessingJob = async (jobRow) => {
+    try {
+      await processVideoFromUrl(jobRow, { trace: false });
+    } catch (err) {
+      const msg = formatExecError(err);
+      await failJobIfProcessing(msg);
+      return {
+        ok: false,
+        job_id: jobId,
+        status: "failed",
+        error_message: msg,
+        error: msg,
+      };
+    }
+    const terminalState = await readTerminalState();
+    if (terminalState.status === "completed" || terminalState.status === "failed") {
+      return terminalState;
+    }
+    const msg = `processor_non_terminal_status_${terminalState.status || "unknown"}`;
+    await failJobIfProcessing(msg);
+    return {
+      ok: false,
+      job_id: jobId,
+      status: "failed",
+      error_message: msg,
+      error: msg,
     };
   };
   const { data: job, error: fetchErr } = await sb.from("video_jobs").select("*").eq("id", jobId).maybeSingle();
@@ -140,9 +215,8 @@ export default async function handler(req, res) {
   }
 
   if (job.status === "processing") {
-    await sleep(1200);
-    const terminalOrActive = await readTerminalState();
-    return sendJson(res, 200, terminalOrActive);
+    const terminalState = await processClaimedOrProcessingJob(job);
+    return sendJson(res, 200, terminalState);
   }
 
   if (job.status !== "queued") {
@@ -170,66 +244,27 @@ export default async function handler(req, res) {
   }
 
   if (!claimed) {
-    await sleep(1200);
-    const terminalOrActive = await readTerminalState();
-    return sendJson(res, 200, terminalOrActive);
-  }
-
-  try {
-    await processVideoFromUrl(claimed, { trace: false });
-    const { data: finalRow } = await sb.from("video_jobs").select("status,error_message").eq("id", jobId).maybeSingle();
-    if (finalRow?.status === "failed") {
-      return sendJson(res, 200, {
-        ok: false,
-        job_id: jobId,
-        status: "failed",
-        error_message: finalRow.error_message || "processor_failed_without_message",
-        error: finalRow.error_message || "processor_failed_without_message",
-      });
+    await sleep(500);
+    const latest = await readJobRow();
+    if (latest.status === "processing") {
+      const terminalState = await processClaimedOrProcessingJob(latest);
+      return sendJson(res, 200, terminalState);
     }
-    if (finalRow?.status !== "completed") {
-      const msg = `processor_non_terminal_status_${finalRow?.status || "unknown"}`;
-      await sb
-        .from("video_jobs")
-        .update({
-          status: "failed",
-          error: msg,
-          error_message: msg,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", jobId)
-        .eq("status", "processing");
-      return sendJson(res, 200, {
-        ok: false,
-        job_id: jobId,
-        status: "failed",
-        error_message: msg,
-        error: msg,
-      });
+    const terminalState = await readTerminalState();
+    if (terminalState.status === "completed" || terminalState.status === "failed") {
+      return sendJson(res, 200, terminalState);
     }
-    return sendJson(res, 200, {
-      ok: true,
-      job_id: jobId,
-      status: "completed",
-      error_message: finalRow?.error_message || null,
-    });
-  } catch (err) {
-    const msg = formatExecError(err);
-    await sb
-      .from("video_jobs")
-      .update({
-        status: "failed",
-        error: msg,
-        error_message: msg,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", jobId)
-      .eq("status", "processing");
+    const msg = `processor_non_terminal_status_${terminalState.status || "unknown"}`;
+    await failJobIfProcessing(msg);
     return sendJson(res, 200, {
       ok: false,
-      error: msg,
       job_id: jobId,
+      status: "failed",
       error_message: msg,
+      error: msg,
     });
   }
+
+  const terminalState = await processClaimedOrProcessingJob(claimed);
+  return sendJson(res, 200, terminalState);
 }
