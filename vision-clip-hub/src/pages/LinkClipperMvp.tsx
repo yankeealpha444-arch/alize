@@ -157,6 +157,9 @@ export default function LinkClipperMvp() {
     <div className="min-h-screen bg-background text-foreground">
       <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
         <div className="max-w-2xl">
+          <p className="text-xs font-semibold text-amber-700">
+            CLIPPER_FAILED_UI_FIX_715f48f
+          </p>
           <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             Alize Clips
           </p>
