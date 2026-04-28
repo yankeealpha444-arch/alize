@@ -13,6 +13,7 @@ import { promisify } from "util";
 import fs from "fs";
 import path from "path";
 import os from "os";
+import ytdl from "ytdl-core";
 import { loadEnvFromRoot } from "./loadEnvFromRoot.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -274,6 +275,30 @@ function formatExecError(err) {
   return String(err);
 }
 
+function isExecutableMissingError(err) {
+  if (!err) return false;
+  const code = err && typeof err === "object" && "code" in err ? String(err.code || "") : "";
+  const msg = formatExecError(err).toLowerCase();
+  return code === "ENOENT" || msg.includes("spawn yt-dlp enoent");
+}
+
+async function resolveYoutubeStreamUrlWithYtdlCore(pageUrl) {
+  const info = await ytdl.getInfo(pageUrl);
+  const chosen = ytdl.chooseFormat(info.formats, {
+    quality: "highestvideo",
+    filter: (format) => {
+      const hasMuxed = format.hasVideo && format.hasAudio;
+      const withinHeight = Number.isFinite(format.height) ? format.height <= 720 : true;
+      return hasMuxed && withinHeight;
+    },
+  });
+  const url = String(chosen?.url || "").trim();
+  if (!url) {
+    throw new Error("ytdl-core returned no playable stream url");
+  }
+  return url;
+}
+
 async function updateJobStage(sb, jobId, prevMeta, stage, details = {}) {
   const nextMeta = {
     ...prevMeta,
@@ -409,6 +434,7 @@ export async function processVideoFromUrl(job) {
     } else {
       if (!pageUrl) throw new Error("Job has no source_url / youtube_video_id");
       step(3, "download command started", { mode: "yt-dlp", source_url: pageUrl });
+      console.log("[clipper-worker] yt-dlp start", { jobId, source_url: pageUrl });
       log("yt-dlp start", { jobId, source_url: pageUrl });
       jobMetadata = await updateJobStage(sb, jobId, jobMetadata, "yt-dlp-starting", { source_url: pageUrl });
       const cookiesFromBrowser = String(process.env.YTDLP_COOKIES_FROM_BROWSER || "").trim();
@@ -445,11 +471,34 @@ export async function processVideoFromUrl(job) {
         }
         sourceIsLocalFile = false;
         jobMetadata = await updateJobStage(sb, jobId, jobMetadata, "yt-dlp-complete", { strategy: "stream-url" });
+        console.log("[clipper-worker] yt-dlp success", { jobId, source_url: pageUrl, stream_url_found: true });
         log("yt-dlp success", { jobId, source_url: pageUrl, stream_url_found: true });
       } catch (err) {
         const msg = formatExecError(err);
+        console.error("[clipper-worker] yt-dlp error", { jobId, error_message: msg });
         log("yt-dlp fail", { jobId, error_message: msg });
-        throw new Error(msg);
+        if (!isExecutableMissingError(err)) {
+          throw new Error(msg);
+        }
+        log("yt-dlp missing; fallback to ytdl-core", { jobId, source_url: pageUrl });
+        jobMetadata = await updateJobStage(sb, jobId, jobMetadata, "ytdl-core-fallback-starting", {
+          source_url: pageUrl,
+          fallback_reason: "spawn_yt-dlp_enoent",
+        });
+        try {
+          inputMediaSource = await withTimeout(YTDLP_TIMEOUT_MS, "ytdl-core get stream url", async () => {
+            return await resolveYoutubeStreamUrlWithYtdlCore(pageUrl);
+          });
+          sourceIsLocalFile = false;
+          jobMetadata = await updateJobStage(sb, jobId, jobMetadata, "ytdl-core-fallback-complete", {
+            strategy: "stream-url",
+          });
+          log("ytdl-core fallback success", { jobId, source_url: pageUrl, stream_url_found: true });
+        } catch (fallbackErr) {
+          const fallbackMsg = formatExecError(fallbackErr);
+          log("ytdl-core fallback fail", { jobId, error_message: fallbackMsg });
+          throw new Error(fallbackMsg);
+        }
       }
       step(4, "download command completed", { mode: "yt-dlp", inputMediaSource });
       log("video stream resolved", { inputMediaSource });
@@ -786,6 +835,9 @@ export async function processVideoFromUrl(job) {
     await sb
       .from("video_jobs")
       .update({
+        status: "failed",
+        error: msg,
+        error_message: msg,
         updated_at: new Date().toISOString(),
         metadata: {
           ...jobMetadata,
