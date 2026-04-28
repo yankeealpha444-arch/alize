@@ -4,7 +4,6 @@
 // ONLY FIX THE SPECIFIC REQUESTED LOGIC
 // UI changes require: "UI change approved"
 
-export { default } from "./Index";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";

@@ -6,7 +6,7 @@ import { demoClips } from "@/data/demoClips";
 import { flowStore } from "@/store/flowStore";
 import { ensureVideoMvpProjectId } from "../../../src/lib/videoMvpProject";
 import { trackEvent } from "../../../src/lib/trackingEvents";
-import { createVideoJobFromSourceUrl } from "../../../src/lib/mvp/videoClipperBackend";
+import { createVideoJobFromSourceUrl } from "@/lib/mvp/videoClipperBackend";
 
 function formatTime(sec: number): string {
   if (!Number.isFinite(sec)) return "0s";

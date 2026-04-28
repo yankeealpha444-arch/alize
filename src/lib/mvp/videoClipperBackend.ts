@@ -330,6 +330,25 @@ function makeUuidLike(seed: string): string {
   return `${clean}-${Date.now()}`;
 }
 
+async function triggerAutoWorkerTick(jobId: string): Promise<void> {
+  console.log("[clipper][backend] triggering worker INLINE", jobId);
+  try {
+    const res = await fetch("/api/clip-worker-run", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ jobId }),
+    });
+
+    const text = await res.text();
+
+    console.log("[clipper][backend] worker response INLINE", text);
+  } catch (err) {
+    console.error("[clipper][backend] worker trigger failed", err);
+  }
+}
+
 // Real clip generation is handled by server/clipWorker.mjs + server/processVideoFromUrl.mjs.
 
 async function fetchYoutubeOembed(url: string): Promise<{ title: string; authorName: string | null; thumbnailUrl: string | null } | null> {
@@ -415,6 +434,7 @@ export async function uploadSourceVideoAndCreateJob(
 }
 
 export async function createVideoJobFromSourceUrl(projectId: string, sourceUrl: string): Promise<VideoJobRow> {
+  console.log("[clipper][backend] function entered");
   const url = sourceUrl.trim();
   console.log("[clipper][backend] createVideoJobFromSourceUrl:start", {
     projectId,
@@ -470,6 +490,7 @@ export async function createVideoJobFromSourceUrl(projectId: string, sourceUrl: 
       status: row.status,
     });
     console.log("[job-created]", { id: row.id, status: row.status });
+    void triggerAutoWorkerTick(row.id);
     return row;
   } catch (e) {
     const msg = e instanceof Error ? e.message : undefined;

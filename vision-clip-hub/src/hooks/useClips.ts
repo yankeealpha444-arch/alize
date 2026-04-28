@@ -5,7 +5,7 @@ import {
   fetchClipperState,
   fetchVideoClipsByJobIdFresh,
   type VideoJobStatus,
-} from "../../../src/lib/mvp/videoClipperBackend";
+} from "@/lib/mvp/videoClipperBackend";
 
 interface UseClipsResult {
   clips: Clip[];

@@ -45,8 +45,10 @@ const sb = createClient(supabaseUrl, supabaseKey);
 const TRACE_JOB_ID = process.env.CLIP_WORKER_TRACE_JOB_ID || "a3a61c3a-6e47-48e7-b83b-bd6845c91c4f";
 
 async function processNextJob() {
+  const freshAfterIso = new Date(Date.now() - 10 * 60 * 1000).toISOString();
   const filters = {
-    claim_statuses: ["queued", "failed"],
+    claim_statuses: ["queued"],
+    created_after: freshAfterIso,
     claim_source_kind: "youtube_url",
     order_by: "created_at asc",
     limit: 1,
@@ -70,19 +72,9 @@ async function processNextJob() {
   if (processingCountErr) {
     console.error("[clipper-worker] processing count error", processingCountErr.message);
   }
-  const { count: failedCount, error: failedCountErr } = await sb
-    .from("video_jobs")
-    .select("id", { count: "exact", head: true })
-    .eq("status", "failed")
-    .eq("source_kind", "youtube_url");
-  if (failedCountErr) {
-    console.error("[clipper-worker] failed count error", failedCountErr.message);
-  }
-
   console.log("[clipper-worker] matching jobs", {
     queued: queuedCount ?? 0,
     processing: processingCount ?? 0,
-    failed: failedCount ?? 0,
   });
 
   const staleBeforeIso = new Date(Date.now() - 2 * 60 * 1000).toISOString();
@@ -147,20 +139,24 @@ async function processNextJob() {
     console.log("[clipper-worker] newest 5 video_jobs", newestJobs ?? []);
   }
 
-  const { data: queuedOrFailed, error: qErr } = await sb
+  console.log("[worker-debug] querying statuses:", ["queued"]);
+  const { data: queuedFresh, error: qErr } = await sb
     .from("video_jobs")
     .select("*")
-    .in("status", ["queued", "failed"])
+    .eq("status", "queued")
     .eq("source_kind", "youtube_url")
+    .gt("created_at", freshAfterIso)
     .order("created_at", { ascending: true })
     .limit(1);
+  console.log("[worker-debug] jobs returned:", (queuedFresh ?? []).length);
 
   if (qErr) {
     console.error("[clipper-worker] poll error", qErr.message);
     return;
   }
-  const job = queuedOrFailed?.[0];
+  const job = queuedFresh?.[0];
   if (!job) return;
+  console.log("[worker] picked job:", job.id, job.created_at);
   console.log("[clipper-worker] job picked", {
     id: job.id,
     status: job.status,
@@ -169,48 +165,11 @@ async function processNextJob() {
   });
 
   if (job.status === "failed") {
-    const metadata = job.metadata && typeof job.metadata === "object" && !Array.isArray(job.metadata) ? job.metadata : {};
-    const retries = Number(metadata.worker_failed_retry_count || 0);
-    const maxRetries = 2;
-
-    console.log("[clipper-worker] job failed reason", {
+    console.log("[clipper-worker] hard skip failed job", {
       id: job.id,
+      created_at: job.created_at,
       error_message: job.error_message || job.error || null,
-      retry_count: retries,
-      max_retries: maxRetries,
     });
-
-    if (retries >= maxRetries) {
-      console.log("[clipper-worker] retry limit reached, skipping failed job", {
-        id: job.id,
-        retry_count: retries,
-      });
-      return;
-    }
-
-    const nextRetry = retries + 1;
-    const { data: requeued, error: requeueErr } = await sb
-      .from("video_jobs")
-      .update({
-        status: "queued",
-        updated_at: new Date().toISOString(),
-        metadata: {
-          ...metadata,
-          worker_failed_retry_count: nextRetry,
-          worker_last_retry_at: new Date().toISOString(),
-        },
-      })
-      .eq("id", job.id)
-      .eq("status", "failed")
-      .select("id,status")
-      .maybeSingle();
-    if (requeueErr) {
-      console.error("[clipper-worker] failed job requeue error", requeueErr.message);
-      return;
-    }
-    if (!requeued) return;
-
-    console.log(`[clipper-worker] retrying job ${job.id} attempt ${nextRetry}`);
     return;
   }
 

@@ -5,7 +5,7 @@ import { useClips } from "@/hooks/useClips";
 import { flowStore } from "@/store/flowStore";
 import { ensureVideoMvpProjectId } from "../../../src/lib/videoMvpProject";
 import { trackEvent } from "../../../src/lib/trackingEvents";
-import { createVideoJobFromSourceUrl } from "../../../src/lib/mvp/videoClipperBackend";
+import { createVideoJobFromSourceUrl } from "@/lib/mvp/videoClipperBackend";
 
 function formatTime(sec: number): string {
   if (!Number.isFinite(sec)) return "0s";
@@ -191,7 +191,10 @@ export default function LinkClipperMvp() {
 
           <button
             type="button"
-            onClick={() => void handleGenerate()}
+            onClick={() => {
+              console.log("[clipper][UI] Generate button clicked");
+              void handleGenerate();
+            }}
             disabled={isGenerating}
             className="mt-4 inline-flex w-full items-center justify-center rounded-md bg-foreground px-4 py-3 text-sm font-semibold text-background transition-transform hover:scale-[1.01] active:scale-100 disabled:opacity-60"
           >

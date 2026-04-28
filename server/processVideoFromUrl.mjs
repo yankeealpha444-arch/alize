@@ -411,6 +411,7 @@ export async function processVideoFromUrl(job) {
       step(3, "download command started", { mode: "yt-dlp", source_url: pageUrl });
       log("yt-dlp start", { jobId, source_url: pageUrl });
       jobMetadata = await updateJobStage(sb, jobId, jobMetadata, "yt-dlp-starting", { source_url: pageUrl });
+      const cookiesFromBrowser = String(process.env.YTDLP_COOKIES_FROM_BROWSER || "").trim();
       const ytDlpArgs = [
         "-g",
         "-f",
@@ -423,8 +424,12 @@ export async function processVideoFromUrl(job) {
         "--socket-timeout",
         "30",
         "--force-ipv4",
-        pageUrl,
       ];
+      if (cookiesFromBrowser) {
+        ytDlpArgs.push("--cookies-from-browser", cookiesFromBrowser);
+        log(`yt-dlp cookies-from-browser enabled: ${cookiesFromBrowser}`);
+      }
+      ytDlpArgs.push(pageUrl);
       log("yt-dlp args", { jobId, args: ytDlpArgs });
       jobMetadata = await updateJobStage(sb, jobId, jobMetadata, "yt-dlp-downloading", { strategy: "stream-url" });
       try {
@@ -487,7 +492,8 @@ export async function processVideoFromUrl(job) {
     for (let i = 0; i < segments.length; i++) {
       const [start, end] = segments[i];
       const len = end - start;
-      const outp = path.join(tmpRoot, `clip-${i + 1}.mp4`);
+      const inputPath = inputMediaSource;
+      const outputPath = path.join(tmpRoot, `clip-${i + 1}-out.mp4`);
       // Seek before -i for faster remote stream cutting.
       const ffmpegArgs = [
         "-y",
@@ -496,7 +502,7 @@ export async function processVideoFromUrl(job) {
         "-t",
         String(len),
         "-i",
-        inputMediaSource,
+        inputPath,
         "-map",
         "0:v:0?",
         "-map",
@@ -515,13 +521,18 @@ export async function processVideoFromUrl(job) {
         "128k",
         "-movflags",
         "+faststart",
-        outp,
       ];
+      ffmpegArgs.push(outputPath);
+      console.log("[ffmpeg] input:", inputPath);
+      console.log("[ffmpeg] output:", outputPath);
+      console.log("[ffmpeg-check] final input:", inputPath);
+      console.log("[ffmpeg-check] final output:", outputPath);
+      console.log("[ffmpeg-final] ARGS:", ffmpegArgs.join(" "));
       log("clip export plan", {
         clip_index: i + 1,
         start_time_sec: start,
         end_time_sec: end,
-        output_path: outp,
+        output_path: outputPath,
         ffmpeg_args: ffmpegArgs,
       });
       if (i === 0) step(8, "ffmpeg clip 1 started", { start_time_sec: start, end_time_sec: end });
@@ -530,22 +541,22 @@ export async function processVideoFromUrl(job) {
         clip_index: i + 1,
         start_time_sec: start,
         end_time_sec: end,
-        output_path: outp,
+        output_path: outputPath,
       });
       await withTimeout(FFMPEG_CLIP_TIMEOUT_MS, `ffmpeg clip ${i + 1}`, async () => {
         try {
           await execFileAsync(FFMPEG_BIN, ffmpegArgs);
-          log("ffmpeg export success", { jobId, clip_index: i + 1, output_path: outp });
+          log("ffmpeg export success", { jobId, clip_index: i + 1, output_path: outputPath });
         } catch (err) {
           const msg = formatExecError(err);
           log("ffmpeg export fail", { jobId, clip_index: i + 1, error_message: msg });
           throw new Error(`ffmpeg clip ${i + 1} failed: ${msg}`);
         }
       });
-      if (i === 0) step(9, "clip 1 completed", { outputPath: outp });
-      console.log("[clipper-worker] clip file created", outp);
+      if (i === 0) step(9, "clip 1 completed", { outputPath });
+      console.log("[clipper-worker] clip file created", outputPath);
       log("clips cut", `clip ${i + 1}`, `${start}s–${end}s`);
-      clipArtifacts.push({ start, end, localPath: outp });
+      clipArtifacts.push({ start, end, localPath: outputPath });
     }
 
     const clipInserts = [];
