@@ -14,6 +14,7 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import ytdl from "ytdl-core";
+import ffmpegStatic from "ffmpeg-static";
 import { loadEnvFromRoot } from "./loadEnvFromRoot.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -67,6 +68,7 @@ const YT_DLP_BIN = resolveExecutable("YT_DLP_PATH", ["yt-dlp", "yt-dlp.exe"], [
 ]);
 const FFMPEG_BIN = resolveExecutable("FFMPEG_PATH", ["ffmpeg", "ffmpeg.exe"], [
   process.env.FFMPEG_PATH || "",
+  typeof ffmpegStatic === "string" ? ffmpegStatic : "",
 ]);
 const FFPROBE_BIN = resolveExecutable(
   "FFPROBE_PATH",
@@ -486,7 +488,6 @@ export async function processVideoFromUrl(job) {
       console.log("[clipper-worker] yt-dlp start", { jobId, source_url: pageUrl });
       log("yt-dlp start", { jobId, source_url: pageUrl });
       jobMetadata = await updateJobStage(sb, jobId, jobMetadata, "yt-dlp-starting", { source_url: pageUrl });
-      const cookiesFromBrowser = String(process.env.YTDLP_COOKIES_FROM_BROWSER || "").trim();
       const ytDlpArgs = [
         "-g",
         "-f",
@@ -500,10 +501,6 @@ export async function processVideoFromUrl(job) {
         "30",
         "--force-ipv4",
       ];
-      if (cookiesFromBrowser) {
-        ytDlpArgs.push("--cookies-from-browser", cookiesFromBrowser);
-        log(`yt-dlp cookies-from-browser enabled: ${cookiesFromBrowser}`);
-      }
       ytDlpArgs.push(pageUrl);
       log("yt-dlp args", { jobId, args: ytDlpArgs });
       jobMetadata = await updateJobStage(sb, jobId, jobMetadata, "yt-dlp-downloading", { strategy: "stream-url" });
