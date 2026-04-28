@@ -131,14 +131,14 @@ export default function LinkClipperMvp() {
 
       void trackEvent("generation_failed", pid, "link_clipper_generation_failed");
 
-      setMessage("Could not generate clips from that link. Try another public video URL.");
+      setMessage(err instanceof Error && err.message ? err.message : "Could not generate clips from that link. Try another public video URL.");
     } finally {
       setIsGenerating(false);
     }
   };
 
   const isQueuedOrProcessing = latestJobStatus === "queued" || latestJobStatus === "processing";
-  const isFailed = latestJobStatus === "failed";
+  const isFailed = latestJobStatus === "failed" || Boolean(message);
   const hasNoJob = !activeJobId && !latestJobStatus;
   const displayClips = clips
     .filter((clip) => !(clip.video_url?.includes("interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4")))
@@ -219,7 +219,7 @@ export default function LinkClipperMvp() {
                 Failed to generate clips
               </p>
               <p className="mt-1 text-sm text-muted-foreground">
-                {latestJobError?.trim() || "Unknown error"}
+                {latestJobError?.trim() || message?.trim() || "Unknown error"}
               </p>
             </div>
           ) : null}
