@@ -194,6 +194,8 @@ export default function LinkClipperMvp() {
           <button
             type="button"
             onClick={() => {
+              alert("CLICKED GENERATE");
+              console.log("[UI] Generate clicked");
               console.log("[clipper][UI] Generate button clicked");
               void handleGenerate();
             }}

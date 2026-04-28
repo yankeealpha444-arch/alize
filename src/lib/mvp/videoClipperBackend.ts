@@ -335,16 +335,21 @@ function makeUuidLike(seed: string): string {
 async function triggerAutoWorkerTick(jobId: string): Promise<void> {
   console.log("[clipper][backend] triggering worker INLINE", jobId);
   try {
-    const res = await fetch("/api/clip-worker-run", {
+    const res = await fetch("/api/process-job", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ jobId }),
     });
-
     const text = await res.text();
-
+    let parsed: unknown = null;
+    try {
+      parsed = text ? JSON.parse(text) : null;
+    } catch {
+      parsed = { parse_error: true, raw: text };
+    }
+    console.log("[process-job response]", parsed);
     console.log("[clipper][backend] worker response INLINE", text);
   } catch (err) {
     console.error("[clipper][backend] worker trigger failed", err);
@@ -436,6 +441,7 @@ export async function uploadSourceVideoAndCreateJob(
 }
 
 export async function createVideoJobFromSourceUrl(projectId: string, sourceUrl: string): Promise<VideoJobRow> {
+  console.log("[backend] createVideoJobFromSourceUrl entered");
   console.log("[clipper][backend] function entered");
   const url = sourceUrl.trim();
   console.log("[clipper][backend] createVideoJobFromSourceUrl:start", {
@@ -492,7 +498,15 @@ export async function createVideoJobFromSourceUrl(projectId: string, sourceUrl: 
       status: row.status,
     });
     console.log("[job-created]", { id: row.id, status: row.status });
-    console.log("[clipper][backend] auto-worker-trigger disabled for stable mode", { jobId: row.id });
+    console.log("[backend] calling process-job", row.id);
+    await fetch("/api/process-job", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jobId: row.id })
+    })
+      .then(res => res.json())
+      .then(json => console.log("[process-job response]", json))
+      .catch(err => console.error("[process-job error]", err));
     return row;
   } catch (e) {
     const msg = e instanceof Error ? e.message : undefined;
