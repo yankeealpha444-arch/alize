@@ -10,12 +10,7 @@ if (!liveUrl) {
   process.exit(1);
 }
 
-const requiredText = ["V26 BUILD ACTIVE", "LIVE FILE: LinkClipperMvp", "Alize Clips"];
-const requiredLogs = [
-  "[UI] Generate clicked",
-  "[backend] createVideoJobFromSourceUrl entered",
-  "[backend] calling process-job",
-];
+const requiredText = ["Alize Clips"];
 
 const consoleLines = [];
 const requestUrls = [];
@@ -55,11 +50,6 @@ page.on("response", async (res) => {
     lastSuccessfulStep = "process_job_http_response_received";
   }
 });
-page.on("dialog", async (dialog) => {
-  console.log(`[browser-dialog] ${dialog.message()}`);
-  await dialog.accept();
-});
-
 try {
   await page.goto(liveUrl, { waitUntil: "networkidle", timeout: 120000 });
 
@@ -92,15 +82,6 @@ try {
     await page.waitForTimeout(1000);
   }
 
-  for (const line of requiredLogs) {
-    if (!consoleLines.some((entry) => entry.includes(line))) {
-      missing.push(`missing_console_log:${line}`);
-    }
-  }
-  if (!missing.some((m) => m.startsWith("missing_console_log:"))) {
-    lastSuccessfulStep = "required_console_logs_seen";
-  }
-
   const hasProcessJobRequest = requestUrls.some((line) => line.startsWith("POST ") && line.includes("/api/process-job"));
   if (!hasProcessJobRequest) {
     missing.push("missing_network_post:/api/process-job");
@@ -126,9 +107,9 @@ try {
     if (typeof processJobResponse !== "object") {
       missing.push("invalid_process_job_response_shape");
     } else {
-      const finalStatus = processJobResponse?.status;
+      const finalStatus = processJobResponse?.status || (processJobResponse?.ok === false ? "failed" : undefined);
       const jobId = processJobResponse?.job_id;
-      const errorMessage = processJobResponse?.error_message;
+      const errorMessage = processJobResponse?.error_message || processJobResponse?.error;
       if (processJobHttpStatus !== 200) {
         missing.push(`process_job_http_status_${processJobHttpStatus}`);
       }

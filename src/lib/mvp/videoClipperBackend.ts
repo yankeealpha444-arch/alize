@@ -441,8 +441,6 @@ export async function uploadSourceVideoAndCreateJob(
 }
 
 export async function createVideoJobFromSourceUrl(projectId: string, sourceUrl: string): Promise<VideoJobRow> {
-  console.log("[backend] createVideoJobFromSourceUrl entered");
-  console.log("[clipper][backend] function entered");
   const url = sourceUrl.trim();
   console.log("[clipper][backend] createVideoJobFromSourceUrl:start", {
     projectId,
@@ -498,7 +496,6 @@ export async function createVideoJobFromSourceUrl(projectId: string, sourceUrl: 
       status: row.status,
     });
     console.log("[job-created]", { id: row.id, status: row.status });
-    console.log("[backend] calling process-job", row.id);
     await fetch("/api/process-job", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
