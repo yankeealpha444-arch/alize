@@ -12,6 +12,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
+    "verify:live-clipper": "node scripts/verify-live-clipper.mjs",
     "worker:clip": "node server/clipWorker.mjs",
     "worker:clip:cookies": "set YTDLP_COOKIES_FROM_BROWSER=chrome&& node server/clipWorker.mjs",
     "server:vizard": "node server/vizardServer.mjs"
