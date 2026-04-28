@@ -299,6 +299,44 @@ async function resolveYoutubeStreamUrlWithYtdlCore(pageUrl) {
   return url;
 }
 
+async function downloadYoutubeWithYtdlCoreToFile(pageUrl, outputPath) {
+  await fs.promises.mkdir(path.dirname(outputPath), { recursive: true });
+  const userAgent =
+    process.env.YTDL_USER_AGENT ||
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+  await new Promise((resolve, reject) => {
+    const stream = ytdl(pageUrl, {
+      quality: "highest",
+      filter: "audioandvideo",
+      requestOptions: {
+        headers: {
+          "user-agent": userAgent,
+          accept: "*/*",
+          "accept-language": "en-US,en;q=0.9",
+          referer: "https://www.youtube.com/",
+          origin: "https://www.youtube.com",
+        },
+      },
+    });
+    const out = fs.createWriteStream(outputPath);
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    const fail = (err) => {
+      if (settled) return;
+      settled = true;
+      reject(err);
+    };
+    stream.on("error", fail);
+    out.on("error", fail);
+    out.on("finish", finish);
+    stream.pipe(out);
+  });
+}
+
 async function updateJobStage(sb, jobId, prevMeta, stage, details = {}) {
   const nextMeta = {
     ...prevMeta,
@@ -486,16 +524,24 @@ export async function processVideoFromUrl(job) {
           fallback_reason: "spawn_yt-dlp_enoent",
         });
         try {
-          inputMediaSource = await withTimeout(YTDLP_TIMEOUT_MS, "ytdl-core get stream url", async () => {
-            return await resolveYoutubeStreamUrlWithYtdlCore(pageUrl);
+          const ytdlFallbackPath = path.join(tmpRoot, "source-ytdl-core-fallback.mp4");
+          await withTimeout(YTDLP_TIMEOUT_MS, "ytdl-core download source video", async () => {
+            await downloadYoutubeWithYtdlCoreToFile(pageUrl, ytdlFallbackPath);
           });
-          sourceIsLocalFile = false;
+          if (!existsFile(ytdlFallbackPath)) {
+            throw new Error("ytdl-core fallback did not produce local source file");
+          }
+          inputMediaSource = ytdlFallbackPath;
+          sourceIsLocalFile = true;
           jobMetadata = await updateJobStage(sb, jobId, jobMetadata, "ytdl-core-fallback-complete", {
-            strategy: "stream-url",
+            strategy: "local-file",
           });
-          log("ytdl-core fallback success", { jobId, source_url: pageUrl, stream_url_found: true });
+          log("ytdl-core fallback success", { jobId, source_url: pageUrl, output_path: ytdlFallbackPath });
         } catch (fallbackErr) {
           const fallbackMsg = formatExecError(fallbackErr);
+          if (fallbackMsg.includes("Status code: 410")) {
+            throw new Error(`youtube_stream_410_source_unusable: ${fallbackMsg}`);
+          }
           log("ytdl-core fallback fail", { jobId, error_message: fallbackMsg });
           throw new Error(fallbackMsg);
         }
