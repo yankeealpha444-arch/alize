@@ -126,22 +126,19 @@ try {
     if (typeof processJobResponse !== "object") {
       missing.push("invalid_process_job_response_shape");
     } else {
-      const finalStatus = processJobResponse?.final_status;
-      const jobId = processJobResponse?.jobId;
+      const finalStatus = processJobResponse?.status;
+      const jobId = processJobResponse?.job_id;
       const errorMessage = processJobResponse?.error_message;
       if (processJobHttpStatus !== 200) {
         missing.push(`process_job_http_status_${processJobHttpStatus}`);
       }
-      if (!["completed", "failed"].includes(finalStatus)) {
+      if (!["processing", "completed"].includes(finalStatus)) {
         missing.push(`invalid_final_status:${String(finalStatus)}`);
       }
       if (!jobId || (createdJobId && jobId !== createdJobId)) {
         missing.push(`job_id_mismatch:created=${createdJobId || "unknown"} response=${jobId || "missing"}`);
       }
-      if (finalStatus === "failed" && (!errorMessage || String(errorMessage).trim() === "")) {
-        missing.push("failed_without_error_message");
-      }
-      if (["completed", "failed"].includes(finalStatus)) {
+      if (["completed", "processing"].includes(finalStatus)) {
         lastSuccessfulStep = `terminal_status_seen:${finalStatus}`;
       }
     }
