@@ -515,11 +515,21 @@ export async function createVideoJobFromSourceUrl(projectId: string, sourceUrl: 
           };
         }
         console.log("[process-job response]", json);
+        if (json && typeof json === "object" && "ok" in json && json.ok === false) {
+          const errMsg =
+            (typeof json.error_message === "string" && json.error_message.trim()) ||
+            (typeof json.error === "string" && json.error.trim()) ||
+            `process-job failed (HTTP ${res.status})`;
+          throw new Error(errMsg);
+        }
         if (!res.ok) {
           console.error("[process-job error]", { status: res.status, text });
         }
       })
-      .catch(err => console.error("[process-job error]", err));
+      .catch(err => {
+        console.error("[process-job error]", err);
+        throw err;
+      });
     return row;
   } catch (e) {
     const msg = e instanceof Error ? e.message : undefined;
