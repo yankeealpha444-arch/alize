@@ -47,6 +47,7 @@ export default function LinkClipperMvp() {
   const resultsRef = useRef<HTMLElement | null>(null);
   const pendingGeneratedTrack = useRef(false);
   const trackedPlayedClipIds = useRef<Set<string>>(new Set());
+  const startedAtRef = useRef<number | null>(null);
 
   useEffect(() => {
     const projectId = ensureVideoMvpProjectId();
@@ -60,8 +61,20 @@ export default function LinkClipperMvp() {
   useEffect(() => {
     if (latestJobStatus === "completed" || clips.length > 0) {
       setIsGenerating(false);
+      startedAtRef.current = null;
     }
   }, [latestJobStatus, clips.length]);
+
+  useEffect(() => {
+    if (!activeJobId || !isGenerating) return;
+    const timer = window.setTimeout(() => {
+      if (latestJobStatus === "queued" || latestJobStatus === "processing" || !latestJobStatus) {
+        setIsGenerating(false);
+        setMessage("Processing took too long. Please refresh and try a smaller MP4.");
+      }
+    }, 90000);
+    return () => window.clearTimeout(timer);
+  }, [activeJobId, isGenerating, latestJobStatus]);
 
   useEffect(() => {
     if (!shouldScrollToResults || isLoading || clips.length === 0) return;
@@ -90,8 +103,10 @@ export default function LinkClipperMvp() {
       return;
     }
 
+    setActiveJobId(null);
     setIsGenerating(true);
     setMessage("");
+    startedAtRef.current = Date.now();
 
     try {
       flowStore.setSource(trimmed);
@@ -143,14 +158,17 @@ export default function LinkClipperMvp() {
       setMessage("Choose a video file to upload");
       return;
     }
+    setActiveJobId(null);
     setIsGenerating(true);
     setMessage("");
+    startedAtRef.current = Date.now();
     try {
       const pid = ensureVideoMvpProjectId();
       const createdJob = await uploadSourceVideoAndCreateJob(pid, selectedFile);
       localStorage.setItem(`alize_video_job_id_${pid}`, createdJob.id);
       localStorage.setItem(`alize_clips_source_url_${pid}`, selectedFile.name);
       setActiveJobId(createdJob.id);
+      setSelectedFile(null);
       await queryClient.invalidateQueries({ queryKey: ["clips", pid] });
       await queryClient.refetchQueries({
         queryKey: ["clips", pid, createdJob.id],
@@ -162,6 +180,9 @@ export default function LinkClipperMvp() {
       setMessage(err instanceof Error && err.message ? err.message : "Could not process uploaded file.");
     } finally {
       setIsGenerating(false);
+      if (latestJobStatus !== "queued" && latestJobStatus !== "processing") {
+        startedAtRef.current = null;
+      }
     }
   };
 
@@ -186,7 +207,7 @@ export default function LinkClipperMvp() {
       <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
         <div className="max-w-2xl">
           <p className="text-xs font-semibold text-amber-700">
-            CLIPPER_V18_PROCESS_JOB_STATE_FIX
+            CLIPPER_FINAL_UPLOAD_STABLE
           </p>
           <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             Alize Clips
@@ -267,7 +288,7 @@ export default function LinkClipperMvp() {
                 Failed to generate clips
               </p>
               <p className="mt-1 text-sm text-muted-foreground">
-                {latestJobError?.trim() || message?.trim() || "Unknown error"}
+                {message?.trim() || latestJobError?.trim() || "Unknown error"}
               </p>
             </div>
           ) : null}
