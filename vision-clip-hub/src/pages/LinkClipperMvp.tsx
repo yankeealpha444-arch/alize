@@ -346,6 +346,10 @@ export default function LinkClipperMvp() {
   const isFailed = latestJobStatus === "failed" || Boolean(message?.trim()) || Boolean(latestJobError?.trim());
   const hasNoJob =
     !activeJobId && !latestJobStatus && !message && !uploadDiagnostics && !showPreviewFallback;
+  const showProgressPanel =
+    (((isQueuedOrProcessing || isGenerating) && !showPreviewFallback) ||
+      (latestJobStatus === "completed" && progressPct === 100)) &&
+    !isFailed;
   const displayClips = clips
     .filter((clip) => !(clip.video_url?.includes("interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4")))
     .slice(0, 3);
@@ -447,9 +451,11 @@ export default function LinkClipperMvp() {
         </section>
 
         <section ref={resultsRef} className="mt-8">
-          {(isQueuedOrProcessing || isGenerating) && !showPreviewFallback ? (
+          {showProgressPanel ? (
             <div className="max-w-2xl rounded-md border border-border/60 bg-card p-3">
-              <p className="text-sm font-medium text-foreground">Generating clips...</p>
+              <p className="text-sm font-medium text-foreground">
+                {latestJobStatus === "completed" && progressPct === 100 ? "Completed" : "Generating clips..."}
+              </p>
               <p className="mt-1 text-xs text-muted-foreground">{progressStepText}</p>
               <div className="mt-2 h-2 w-full overflow-hidden rounded bg-muted">
                 <div
