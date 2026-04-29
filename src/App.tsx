@@ -52,6 +52,7 @@ import ClipsCleanV3GenerateJob from "@/pages/ClipsCleanV3GenerateJob";
 import ClipsCleanV3NoLandingVideos from "@/pages/ClipsCleanV3NoLandingVideos";
 import ClipsCleanV3LinkedVideo from "@/pages/ClipsCleanV3LinkedVideo";
 import ClipsCleanV4Clean from "@/pages/ClipsCleanV4Clean";
+import AiCeoGuide from "@/pages/AiCeoGuide";
 
 const queryClient = new QueryClient();
 
@@ -102,6 +103,7 @@ export default function App() {
               {/* PRODUCTION WIRING LOCK: /video -> same LinkClipperMvp page */}
               <Route path="/video" element={<VideoMVP />} />
               <Route path="/dashboard" element={<DashboardPage />} />
+              <Route path="/ai-ceo" element={<AiCeoGuide />} />
 
               {/* Public MVP — customer view */}
               <Route path="/p" element={<PublicMVP />} />
