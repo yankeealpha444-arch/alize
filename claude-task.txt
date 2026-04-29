@@ -1,0 +1,26 @@
+You are the execution agent for the Alize Clipper MVP.
+
+Goal:
+Fix upload -> produce 3 clips.
+
+Current blocker:
+ffmpeg clip 1 failed: spawn ffmpeg ENOENT
+
+Rules:
+- Do not change UI
+- Do not fake clips
+- Must produce real 3 clips or real failure
+- Do not leave jobs stuck in processing
+
+Start by inspecting:
+server/processVideoFromUrl.mjs
+package.json
+vercel.json
+
+Implement fix:
+Use ffmpeg-static so ffmpeg works in Vercel serverless.
+
+Then:
+- run node scripts/check-stable-video-mvp.mjs
+- show changes
+- prepare deploy
