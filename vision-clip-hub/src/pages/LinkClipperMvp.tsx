@@ -43,6 +43,10 @@ function formatBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(2)} MB`;
 }
 
+const MAX_MVP_UPLOAD_BYTES = 25 * 1024 * 1024;
+const MAX_MVP_UPLOAD_MESSAGE =
+  "This file is too large for the current MVP. Please upload a video under 25 MB.";
+
 function categorizeFailureCause(raw: string | null | undefined): string {
   const m = (raw || "").toLowerCase();
   if (!m.trim()) return "unknown";
@@ -280,6 +284,22 @@ export default function LinkClipperMvp() {
       mime: selectedFile.type || "unknown",
     };
 
+    if (selectedFile.size > MAX_MVP_UPLOAD_BYTES) {
+      setIsGenerating(false);
+      setMessage(MAX_MVP_UPLOAD_MESSAGE);
+      setShowPreviewFallback(true);
+      setUploadDiagnostics({
+        file: fileMeta,
+        probe: {},
+        processJob: null,
+        jobId: null,
+        dbStatus: null,
+        dbError: MAX_MVP_UPLOAD_MESSAGE,
+      });
+      setSelectedFile(null);
+      return;
+    }
+
     let probe: Record<string, unknown> = {};
     try {
       const p = await probeLocalVideoFile(selectedFile);
@@ -449,6 +469,8 @@ export default function LinkClipperMvp() {
                 File name: {uploadDiagnostics.file.name}
                 <br />
                 Size: {formatBytes(uploadDiagnostics.file.size)} · MIME: {uploadDiagnostics.file.mime}
+                <br />
+                MVP upload limit: {formatBytes(MAX_MVP_UPLOAD_BYTES)}
                 <br />
                 {typeof uploadDiagnostics.probe.durationSec === "number" ? (
                   <>
