@@ -1,12 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Link2 } from "lucide-react";
 import { useClips } from "@/hooks/useClips";
-import { flowStore } from "@/store/flowStore";
 import { ensureVideoMvpProjectId } from "../../../src/lib/videoMvpProject";
 import { trackEvent } from "../../../src/lib/trackingEvents";
 import {
-  createVideoJobFromSourceUrl,
   uploadSourceVideoAndCreateJob,
   type ProcessJobApiPayload,
 } from "@/lib/mvp/videoClipperBackend";
@@ -18,22 +15,6 @@ function formatTime(sec: number): string {
   const m = Math.floor(total / 60);
   const s = total % 60;
   return s === 0 ? `${m}m` : `${m}m ${s}s`;
-}
-
-function isValidPublicVideoUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-
-    if (!["http:", "https:"].includes(url.protocol)) return false;
-
-    if (/^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[0-1])\.)/i.test(url.hostname)) {
-      return false;
-    }
-
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 function formatBytes(n: number): string {
@@ -98,9 +79,8 @@ export default function LinkClipperMvp() {
   const queryClient = useQueryClient();
 
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
-  const { clips, isLoading, latestJobStatus, latestJobError } = useClips(activeJobId, false, true);
+  const { clips, isLoading, latestJobStatus, latestJobError } = useClips(activeJobId, true, true);
 
-  const [link, setLink] = useState(flowStore.get().sourceInput ?? "");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [message, setMessage] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
@@ -192,71 +172,6 @@ export default function LinkClipperMvp() {
 
     setShouldScrollToResults(false);
   }, [shouldScrollToResults, isLoading, clips.length]);
-
-  const handleGenerate = async () => {
-    const trimmed = link.trim();
-
-    const isPublicVideoUrl = isValidPublicVideoUrl(trimmed);
-    if (!trimmed || !isPublicVideoUrl) {
-      setMessage("Paste a valid video link to continue");
-      return;
-    }
-
-    setActiveJobId(null);
-    setIsGenerating(true);
-    setMessage("");
-    startedAtRef.current = Date.now();
-    setUploadDiagnostics(null);
-    setShowPreviewFallback(false);
-    if (previewObjectUrl) {
-      URL.revokeObjectURL(previewObjectUrl);
-      setPreviewObjectUrl(null);
-    }
-
-    try {
-      flowStore.setSource(trimmed);
-
-      const pid = ensureVideoMvpProjectId();
-
-      console.log("[clipper][submit:start]", { pid, trimmed });
-
-      const createdJob = await createVideoJobFromSourceUrl(pid, trimmed);
-      console.log("[clipper][submit:created]", createdJob);
-
-      localStorage.setItem(`alize_video_job_id_${pid}`, createdJob.id);
-      localStorage.setItem(`alize_clips_source_url_${pid}`, trimmed);
-
-      setActiveJobId(createdJob.id);
-
-      console.log("[clipper][submit]", {
-        createdJobId: createdJob.id,
-        source_url: createdJob.source_url ?? trimmed,
-        projectId: pid,
-      });
-
-      void trackEvent("link_submitted", pid, "link_clipper_submit", {
-        source_url: trimmed,
-      });
-
-      await queryClient.invalidateQueries({ queryKey: ["clips", pid] });
-      await queryClient.refetchQueries({
-        queryKey: ["clips", pid, createdJob.id],
-        type: "active",
-      });
-
-      pendingGeneratedTrack.current = true;
-      setShouldScrollToResults(true);
-    } catch (err) {
-      console.error("[clipper][submit:error]", err);
-      const pid = ensureVideoMvpProjectId();
-
-      void trackEvent("generation_failed", pid, "link_clipper_generation_failed");
-
-      setMessage(err instanceof Error && err.message ? err.message : "Could not generate clips from that link. Try another public video URL.");
-    } finally {
-      setIsGenerating(false);
-    }
-  };
 
   const handleUploadGenerate = async () => {
     if (!selectedFile) {
@@ -395,51 +310,27 @@ export default function LinkClipperMvp() {
       <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
         <div className="max-w-2xl">
           <p className="text-xs font-semibold text-amber-700">
-            CLIPPER_REALWORLD_DIAG_v1
+            CLIPPER_UPLOAD_ONLY_LOCKED_V1
           </p>
           <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             Alize Clips
           </p>
 
           <h1 className="font-display text-3xl font-bold tracking-tight sm:text-4xl">
-            Paste a video link and get clips instantly
+            Alize Clips
           </h1>
 
           <p className="mt-2 text-muted-foreground">
-            Turn one video into ready to use clips in seconds
+            Upload a short MP4 and get 3 ready-to-use clips.
           </p>
 
           <p className="mt-2 text-xs text-muted-foreground">
-            by Alize
+            For best results, upload an MP4 under 25 MB.
           </p>
         </div>
 
         <section className="mt-6 max-w-2xl rounded-2xl border border-border/60 bg-card p-5 sm:p-6">
-          <label className="block">
-            <span className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              <Link2 className="h-3.5 w-3.5" />
-              Video link
-            </span>
-
-            <input
-              type="url"
-              value={link}
-              onChange={(e) => setLink(e.target.value)}
-              placeholder="Paste YouTube or public video link"
-              className="w-full rounded-md border border-border bg-background px-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:border-foreground focus:outline-none"
-            />
-          </label>
-
-          <button
-            type="button"
-            onClick={() => void handleGenerate()}
-            disabled={isGenerating}
-            className="mt-4 inline-flex w-full items-center justify-center rounded-md bg-foreground px-4 py-3 text-sm font-semibold text-background transition-transform hover:scale-[1.01] active:scale-100 disabled:opacity-60"
-          >
-            {isGenerating ? "Generating..." : "Generate Clips"}
-          </button>
-
-          <div className="mt-4">
+          <div>
             <input
               type="file"
               accept="video/mp4,video/*"
@@ -548,7 +439,7 @@ export default function LinkClipperMvp() {
 
           {displayClips.length === 0 && !isQueuedOrProcessing && !isGenerating && hasNoJob ? (
             <p className="text-sm text-muted-foreground">
-              No clips yet. Paste a video link to get started.
+              No clips yet. Upload an MP4 to get started.
             </p>
           ) : null}
 
