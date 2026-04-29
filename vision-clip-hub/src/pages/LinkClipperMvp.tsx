@@ -19,13 +19,6 @@ function formatTime(sec: number): string {
   return s === 0 ? `${m}m` : `${m}m ${s}s`;
 }
 
-function formatBytes(n: number): string {
-  if (!Number.isFinite(n) || n < 0) return "?";
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(2)} MB`;
-}
-
 const MAX_MVP_UPLOAD_BYTES = 100 * 1024 * 1024;
 const MAX_MVP_UPLOAD_MESSAGE =
   "This file is too large for the current MVP. Please upload a video under 100 MB.";
@@ -105,6 +98,7 @@ export default function LinkClipperMvp() {
   const pendingGeneratedTrack = useRef(false);
   const trackedPlayedClipIds = useRef<Set<string>>(new Set());
   const startedAtRef = useRef<number | null>(null);
+  const processingStartedAtRef = useRef<number | null>(null);
 
   useEffect(() => {
     const projectId = ensureVideoMvpProjectId();
@@ -123,12 +117,14 @@ export default function LinkClipperMvp() {
       setProgressStepText("Completed");
       setIsGenerating(false);
       startedAtRef.current = null;
+      processingStartedAtRef.current = null;
     }
     if (latestJobStatus === "failed") {
       setProgressStage("failed");
       setProgressStepText("Failed");
       setIsGenerating(false);
       startedAtRef.current = null;
+      processingStartedAtRef.current = null;
     }
   }, [activeJobId, latestJobStatus]);
 
@@ -138,25 +134,42 @@ export default function LinkClipperMvp() {
       setProgressPct((prev) => {
         if (progressStage === "uploading") {
           setProgressStepText("Uploading video");
-          return Math.min(80, Math.max(5, prev + 3));
+          const started = startedAtRef.current ?? Date.now();
+          const elapsedMs = Date.now() - started;
+          const target = 5 + Math.min(1, elapsedMs / 20000) * 50; // 5 -> 55 in ~20s
+          return Math.max(prev, Math.min(55, target));
         }
         if (progressStage === "processing") {
-          setProgressStepText("Processing clips");
-          return Math.min(95, Math.max(80, prev + 1));
+          const started = processingStartedAtRef.current ?? Date.now();
+          const elapsedMs = Date.now() - started;
+          if (elapsedMs < 25000) {
+            setProgressStepText("Creating clips");
+            const target = 55 + (elapsedMs / 25000) * 30; // 55 -> 85
+            return Math.max(prev, Math.min(85, target));
+          }
+          if (elapsedMs < 70000) {
+            setProgressStepText("Finalising downloads");
+            const target = 85 + ((elapsedMs - 25000) / 45000) * 10; // 85 -> 95
+            return Math.max(prev, Math.min(95, target));
+          }
+          setProgressStepText("Almost ready... still processing");
+          const target = 95 + Math.min(3, ((elapsedMs - 70000) / 60000) * 3); // 95 -> 98 slowly
+          return Math.max(prev, Math.min(98, target));
         }
         return prev;
       });
     };
     tick();
-    const timer = window.setInterval(tick, 700);
+    const timer = window.setInterval(tick, 1000);
     return () => window.clearInterval(timer);
   }, [isGenerating, progressStage]);
 
   useEffect(() => {
     if (!isGenerating) return;
-    if (progressStage === "uploading" && progressPct >= 80) {
+    if (progressStage === "uploading" && progressPct >= 55) {
       setProgressStage("processing");
-      setProgressStepText("Processing clips");
+      setProgressStepText("Creating clips");
+      processingStartedAtRef.current = Date.now();
     }
   }, [isGenerating, progressStage, progressPct]);
 
@@ -214,6 +227,7 @@ export default function LinkClipperMvp() {
           setProgressStepText("Completed");
           setIsGenerating(false);
           startedAtRef.current = null;
+          processingStartedAtRef.current = null;
 
           const exact = await fetchVideoClipsByJobIdFresh(activeJobId, { cacheBuster: Date.now() });
           const exactCount = exact.filter((c) => c.job_id === activeJobId).length;
@@ -235,14 +249,28 @@ export default function LinkClipperMvp() {
           setIsGenerating(false);
           setMessage(errText);
           startedAtRef.current = null;
+          processingStartedAtRef.current = null;
           console.log("[clipper-poll] clips fetched count", 0);
           return;
         }
 
-        // queued | processing | null: keep status and 80-95 progress band.
+        // queued | processing | null: keep status and continue smooth 55-98 band.
         setProgressStage("processing");
-        setProgressStepText("Processing clips");
-        setProgressPct((prev) => Math.min(95, Math.max(80, prev)));
+        const started = processingStartedAtRef.current ?? Date.now();
+        if (!processingStartedAtRef.current) processingStartedAtRef.current = started;
+        const elapsedMs = Date.now() - started;
+        if (elapsedMs < 25000) {
+          setProgressStepText("Creating clips");
+          setProgressPct((prev) => Math.max(prev, Math.min(85, 55 + (elapsedMs / 25000) * 30)));
+        } else if (elapsedMs < 70000) {
+          setProgressStepText("Finalising downloads");
+          setProgressPct((prev) => Math.max(prev, Math.min(95, 85 + ((elapsedMs - 25000) / 45000) * 10)));
+        } else {
+          setProgressStepText("Almost ready... still processing");
+          setProgressPct((prev) =>
+            Math.max(prev, Math.min(98, 95 + Math.min(3, ((elapsedMs - 70000) / 60000) * 3))),
+          );
+        }
       } catch (err) {
         console.error("[clipper-poll] error", err);
       } finally {
@@ -285,13 +313,14 @@ export default function LinkClipperMvp() {
     setActiveJobId(null);
     setIsGenerating(true);
     setProgressStage("uploading");
-    setProgressPct(5);
-    setProgressStepText("Uploading video");
+    setProgressPct(0);
+    setProgressStepText("Uploading video...");
     setMessage("");
     setClipVideoErrors({});
     setSelectedFileName(selectedFile.name);
     setUploadDiagnostics(null);
     startedAtRef.current = Date.now();
+    processingStartedAtRef.current = null;
 
     const fileMeta = {
       name: selectedFile.name,
@@ -364,8 +393,9 @@ export default function LinkClipperMvp() {
       } else {
         setIsGenerating(true);
         setProgressStage("processing");
-        setProgressStepText("Processing clips");
-        setProgressPct((prev) => Math.max(prev, 80));
+        processingStartedAtRef.current = Date.now();
+        setProgressStepText("Creating clips");
+        setProgressPct((prev) => Math.max(prev, 55));
       }
 
       await queryClient.invalidateQueries({ queryKey: ["clips", pid] });
@@ -527,21 +557,40 @@ export default function LinkClipperMvp() {
           {showFinalClips ? (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {displayClips.map((clip, idx) => {
-                const clipAny = clip as Record<string, unknown>;
+                const clipAny = clip as unknown as Record<string, unknown>;
                 const videoUrlRaw =
                   (typeof clipAny.video_url === "string" ? clipAny.video_url : "") ||
                   (typeof clipAny.videoUrl === "string" ? clipAny.videoUrl : "");
                 const directUrl = videoUrlRaw.trim();
                 const canDownload = Boolean(directUrl);
                 const clipId = typeof clipAny.id === "string" && clipAny.id ? clipAny.id : `clip-${idx + 1}`;
-                const clipRenderKey = `${clipId}:${directUrl || "no-url"}`;
+                const rawStart =
+                  Number(
+                    clipAny.start_time ??
+                      clipAny.start_time_sec ??
+                      clipAny.start ??
+                      0,
+                  ) || 0;
+                const rawEnd =
+                  Number(
+                    clipAny.end_time ??
+                      clipAny.end_time_sec ??
+                      clipAny.end ??
+                      0,
+                  ) || 0;
+                const rawDuration =
+                  Number(
+                    clipAny.duration_sec ??
+                      clipAny.duration ??
+                      0,
+                  ) || 0;
+                const startSec = Math.max(0, Math.floor(rawStart));
+                const endSec = Math.max(startSec, Math.floor(rawEnd));
+                const durationSec = Math.max(0, Math.floor(rawDuration || (endSec - startSec)));
+                const clipRenderKey = `${clipId}:${idx}:${startSec}:${endSec}:${directUrl || "no-url"}`;
                 const hasVideoLoadError = Boolean(clipVideoErrors[clipRenderKey]);
 
                 const label = `Clip ${idx + 1}`;
-
-                const startSec = Math.max(0, Math.floor(Number(clipAny.start_time) || 0));
-                const endSec = Math.max(startSec, Math.floor(Number(clipAny.end_time) || 0));
-                const durationSec = Math.max(0, endSec - startSec);
 
                 console.log("[clipper][render] clip", {
                   activeJobId,
@@ -562,7 +611,7 @@ export default function LinkClipperMvp() {
                       {label}
                     </p>
 
-                    <div className="relative mt-3 aspect-video overflow-hidden rounded-lg border border-border/60 bg-black">
+                    <div className="mt-3 aspect-video overflow-hidden rounded-lg border border-border/60 bg-muted">
                       {directUrl && !hasVideoLoadError ? (
                         <video
                           src={directUrl}
@@ -588,42 +637,48 @@ export default function LinkClipperMvp() {
                         />
                       ) : (
                         <div className="flex h-full items-center justify-center bg-muted text-xs text-muted-foreground">
-                          {directUrl ? "Clip preview failed to load. Tap Download MP4." : "Clip video unavailable"}
+                          {directUrl ? "Preview unavailable. Download clip." : "Preview unavailable. Download clip."}
                         </div>
                       )}
                     </div>
 
-                    <p className="mt-2 text-xs text-muted-foreground">
-                      Start: {formatTime(startSec)}
-                      {" · "}
-                      End: {formatTime(endSec)}
-                      {" · "}
-                      Duration: {formatTime(durationSec)}
-                    </p>
-                    {typeof clipAny.caption === "string" && clipAny.caption ? (
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        Reason: {clipAny.caption}
-                      </p>
-                    ) : null}
-
                     <div className="mt-3 flex gap-2">
-                      {canDownload ? (
-                        <a
-                          href={directUrl}
-                          download={`clip-${idx + 1}.mp4`}
-                          onClick={() => {
-                            const pid = ensureVideoMvpProjectId();
-                            void trackEvent("clip_downloaded", pid, clipId);
-                          }}
-                          className="inline-flex w-full items-center justify-center rounded-md bg-black px-3 py-2 text-xs font-bold text-white hover:bg-neutral-900"
-                        >
-                          Download MP4
-                        </a>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">
-                          Processing download...
-                        </span>
-                      )}
+                      <a
+                        href={canDownload ? directUrl : "#"}
+                        download={`clip-${idx + 1}.mp4`}
+                        onClick={async (e) => {
+                          e.preventDefault();
+                          if (!canDownload) return;
+                          const fallbackOpen = () => {
+                            window.open(directUrl, "_blank", "noopener,noreferrer");
+                          };
+                          try {
+                            const resp = await fetch(directUrl);
+                            if (!resp.ok) throw new Error(`download_http_${resp.status}`);
+                            const blob = await resp.blob();
+                            const objUrl = URL.createObjectURL(blob);
+                            const a = document.createElement("a");
+                            a.href = objUrl;
+                            a.download = `alize-clip-${idx + 1}.mp4`;
+                            document.body.appendChild(a);
+                            a.click();
+                            a.remove();
+                            window.setTimeout(() => URL.revokeObjectURL(objUrl), 1000);
+                          } catch {
+                            fallbackOpen();
+                          }
+                          const pid = ensureVideoMvpProjectId();
+                          void trackEvent("clip_downloaded", pid, clipId);
+                        }}
+                        className={`inline-flex w-full items-center justify-center rounded-md px-3 py-2 text-xs font-bold ${
+                          canDownload
+                            ? "bg-black text-white hover:bg-neutral-900"
+                            : "bg-neutral-500 text-neutral-100 cursor-not-allowed"
+                        }`}
+                        aria-disabled={!canDownload}
+                      >
+                        Download MP4
+                      </a>
                     </div>
                   </article>
                 );
