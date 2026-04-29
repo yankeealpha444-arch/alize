@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useClips } from "@/hooks/useClips";
 import { ensureVideoMvpProjectId } from "../../../src/lib/videoMvpProject";
 import { trackEvent } from "../../../src/lib/trackingEvents";
+import { STORAGE_BUCKET_VIDEO_UPLOADS } from "../../../src/lib/mvp/storageBuckets";
 import {
   fetchClipperState,
   fetchVideoClipsByJobIdFresh,
@@ -85,6 +86,7 @@ export default function LinkClipperMvp() {
   const [shouldScrollToResults, setShouldScrollToResults] = useState(false);
   const [clipVideoErrors, setClipVideoErrors] = useState<Record<string, boolean>>({});
   const [selectedFileName, setSelectedFileName] = useState<string>("");
+  const [activeSourceVideoUrl, setActiveSourceVideoUrl] = useState<string | null>(null);
   const [uploadDiagnostics, setUploadDiagnostics] = useState<{
     file: { name: string; size: number; mime: string };
     probe: Record<string, unknown>;
@@ -101,11 +103,10 @@ export default function LinkClipperMvp() {
   const processingStartedAtRef = useRef<number | null>(null);
 
   const nextProcessingProgress = (current: number): number => {
-    if (current < 70) return Math.min(99, current + 2);
-    if (current < 85) return Math.min(99, current + 1);
-    if (current < 94) return Math.min(99, current + 0.4);
-    if (current < 99) return Math.min(99, current + 0.1);
-    return 99;
+    if (current < 75) return Math.min(98, current + 2);
+    if (current < 90) return Math.min(98, current + 1);
+    if (current < 98) return Math.min(98, current + 0.3);
+    return 98;
   };
 
   useEffect(() => {
@@ -146,13 +147,13 @@ export default function LinkClipperMvp() {
       setProgressPct((prev) => {
         if (progressStage === "uploading") {
           setProgressStepText("Uploading video");
-          const next = Math.min(45, prev + 2);
+          const next = Math.min(55, prev + 2.5);
           console.log("[progress-no95] current progress", next);
           console.log("[progress-no95] job status", latestJobStatus ?? "uploading");
           return next;
         }
         if (progressStage === "processing") {
-          const next = Math.max(45, nextProcessingProgress(prev));
+          const next = Math.max(55, nextProcessingProgress(prev));
           if (next < 85) {
             setProgressStepText("Creating clips");
           } else if (next < 94) {
@@ -174,31 +175,12 @@ export default function LinkClipperMvp() {
 
   useEffect(() => {
     if (!isGenerating) return;
-    if (progressStage === "uploading" && progressPct >= 45) {
+    if (progressStage === "uploading" && progressPct >= 55) {
       setProgressStage("processing");
       setProgressStepText("Creating clips");
       processingStartedAtRef.current = Date.now();
     }
   }, [isGenerating, progressStage, progressPct]);
-
-  useEffect(() => {
-    if (!isGenerating || progressStage !== "uploading") return;
-    const timer = window.setTimeout(() => {
-      setIsGenerating(false);
-      setProgressStage("failed");
-      setProgressStepText("Failed");
-      setMessage("Upload did not start properly. Please try again or use a smaller MP4.");
-      setUploadDiagnostics((prev) =>
-        prev
-          ? {
-              ...prev,
-              dbError: prev.dbError || "Upload did not start properly. Please try again or use a smaller MP4.",
-            }
-          : prev,
-      );
-    }, 20000);
-    return () => window.clearTimeout(timer);
-  }, [isGenerating, progressStage]);
 
   useEffect(() => {
     if (!activeJobId || !isGenerating) return;
@@ -304,7 +286,13 @@ export default function LinkClipperMvp() {
       setMessage("Choose a video file to upload");
       return;
     }
+    console.log("[upload-start]", {
+      name: selectedFile.name,
+      size: selectedFile.size,
+      type: selectedFile.type || "unknown",
+    });
     setActiveJobId(null);
+    setActiveSourceVideoUrl(null);
     setIsGenerating(true);
     setProgressStage("uploading");
     setProgressPct(0);
@@ -354,6 +342,26 @@ export default function LinkClipperMvp() {
     try {
       const pid = ensureVideoMvpProjectId();
       const { job, processJob } = await uploadSourceVideoAndCreateJob(pid, selectedFile);
+      if (!job?.id) {
+        throw new Error("Upload did not start properly. Please try again or use a smaller MP4.");
+      }
+      const baseUrl = (import.meta.env.VITE_SUPABASE_URL as string | undefined)?.trim() || "";
+      const fallbackSourceVideoUrl =
+        baseUrl && job.source_path
+          ? `${baseUrl}/storage/v1/object/public/${STORAGE_BUCKET_VIDEO_UPLOADS}/${job.source_path}`
+          : null;
+      const resolvedSourceVideoUrl =
+        (typeof job.source_url === "string" && job.source_url.trim()) ||
+        (job.metadata && typeof (job.metadata as Record<string, unknown>).public_url === "string"
+          ? String((job.metadata as Record<string, unknown>).public_url).trim()
+          : "") ||
+        fallbackSourceVideoUrl ||
+        null;
+      setActiveSourceVideoUrl(resolvedSourceVideoUrl);
+      setActiveJobId(job.id);
+      console.log("[upload-result] job_id", job.id);
+      console.log("[upload-result] source_path", job.source_path || null);
+      console.log("[upload-result] status", job.status || null);
 
       const diagErr = job.error_message || processJob.error_message;
       setUploadDiagnostics({
@@ -376,7 +384,6 @@ export default function LinkClipperMvp() {
 
       localStorage.setItem(`alize_video_job_id_${pid}`, job.id);
       localStorage.setItem(`alize_clips_source_url_${pid}`, selectedFile.name);
-      setActiveJobId(job.id);
       setSelectedFile(null);
 
       if (job.status === "failed") {
@@ -400,7 +407,7 @@ export default function LinkClipperMvp() {
       pendingGeneratedTrack.current = true;
       setShouldScrollToResults(true);
     } catch (err) {
-      console.error("[clipper][upload:error]", err);
+      console.error("[upload-error]", err);
       setIsGenerating(false);
       setProgressStage("failed");
       setProgressStepText("Failed");
@@ -433,9 +440,10 @@ export default function LinkClipperMvp() {
       (progressStage === "completed" && progressPct === 100)) &&
       !isFailed);
   const displayClips = clips
+    .filter((clip) => !activeJobId || clip.job_id === activeJobId)
     .filter((clip) => !(clip.video_url?.includes("interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4")))
     .slice(0, 3);
-  const showFinalClips = latestJobStatus === "completed" && !isGenerating && displayClips.length > 0;
+  const showFinalClips = Boolean(activeJobId) && latestJobStatus === "completed" && !isGenerating && !isFailed && displayClips.length > 0;
 
   console.log("[clips-render-final]", {
     isGenerating,
@@ -453,7 +461,6 @@ export default function LinkClipperMvp() {
           <p className="text-xs font-semibold text-amber-700">
             CLIPPER_FINAL_VISIBLE_AND_FAST_CLIPS_FIX
           </p>
-          <p className="text-xs font-semibold text-red-600">PROGRESS_FIX_NO_95_ACTIVE</p>
           <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             Alize Clips
           </p>
@@ -555,7 +562,11 @@ export default function LinkClipperMvp() {
                 const clipAny = clip as unknown as Record<string, unknown>;
                 const videoUrlRaw =
                   (typeof clipAny.video_url === "string" ? clipAny.video_url : "") ||
-                  (typeof clipAny.videoUrl === "string" ? clipAny.videoUrl : "");
+                  (typeof clipAny.videoUrl === "string" ? clipAny.videoUrl : "") ||
+                  (typeof clipAny.source_url === "string" ? clipAny.source_url : "") ||
+                  (typeof clipAny.sourceVideoUrl === "string" ? clipAny.sourceVideoUrl : "") ||
+                  activeSourceVideoUrl ||
+                  "";
                 const directUrl = videoUrlRaw.trim();
                 const canDownload = Boolean(directUrl);
                 const clipId = typeof clipAny.id === "string" && clipAny.id ? clipAny.id : `clip-${idx + 1}`;
@@ -583,7 +594,6 @@ export default function LinkClipperMvp() {
                 const endSec = Math.max(startSec, Math.floor(rawEnd));
                 const durationSec = Math.max(0, Math.floor(rawDuration || (endSec - startSec)));
                 const clipRenderKey = `${clipId}:${idx}:${startSec}:${endSec}:${directUrl || "no-url"}`;
-                const hasVideoLoadError = Boolean(clipVideoErrors[clipRenderKey]);
 
                 const label = `Clip ${idx + 1}`;
 
@@ -607,7 +617,7 @@ export default function LinkClipperMvp() {
                     </p>
 
                     <div className="mt-3 aspect-video overflow-hidden rounded-lg border border-border/60 bg-muted">
-                      {directUrl && !hasVideoLoadError ? (
+                      {directUrl ? (
                         <video
                           src={directUrl}
                           controls

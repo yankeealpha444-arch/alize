@@ -471,28 +471,74 @@ export async function uploadSourceVideoAndCreateJob(
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
   const tempId = makeUuidLike(safeName);
   const sourcePath = `${projectId}/uploads/${tempId}-${safeName}`;
-
-  const upload = await supabase.storage
-    .from(STORAGE_BUCKET_VIDEO_UPLOADS)
-    .upload(sourcePath, file, { upsert: false, contentType: file.type || "video/mp4" });
-  if (upload.error) {
-    throw new Error(mapServiceError(upload.error.message, "Video upload failed"));
+  let upload:
+    | { error: { message?: string } | null }
+    | null = null;
+  try {
+    upload = await supabase.storage
+      .from(STORAGE_BUCKET_VIDEO_UPLOADS)
+      .upload(sourcePath, file, { upsert: false, contentType: file.type || "video/mp4" });
+  } catch (e) {
+    const netMsg = e instanceof Error ? e.message : String(e);
+    console.error("[clipper][backend] upload storage network failure", {
+      step: "supabase_storage_upload",
+      bucket: STORAGE_BUCKET_VIDEO_UPLOADS,
+      sourcePath,
+      fileName: file.name,
+      fileSize: file.size,
+      fileType: file.type || null,
+      error: netMsg,
+    });
+    throw new Error(
+      `Step failed: supabase_storage_upload. Bucket=${STORAGE_BUCKET_VIDEO_UPLOADS}, Path=${sourcePath}, File=${file.name} (${file.size} bytes). Error: ${mapServiceError(netMsg, "Video upload failed")}`,
+    );
+  }
+  if (upload?.error) {
+    const stepMsg = mapServiceError(upload.error.message, "Video upload failed");
+    console.error("[clipper][backend] upload storage rejected", {
+      step: "supabase_storage_upload",
+      bucket: STORAGE_BUCKET_VIDEO_UPLOADS,
+      sourcePath,
+      fileName: file.name,
+      fileSize: file.size,
+      fileType: file.type || null,
+      error: stepMsg,
+    });
+    throw new Error(
+      `Step failed: supabase_storage_upload. Bucket=${STORAGE_BUCKET_VIDEO_UPLOADS}, Path=${sourcePath}, File=${file.name} (${file.size} bytes). Error: ${stepMsg}`,
+    );
   }
 
   const sb = asTableClient();
-  const inserted = await sb
-    .from("video_jobs")
-    .insert({
-      project_id: projectId,
-      source_path: sourcePath,
-      source_filename: file.name,
-      source_size_bytes: file.size,
-      source_mime_type: file.type || "application/octet-stream",
-      source_kind: "upload",
-      status: "queued",
-    })
-    .select("*")
-    .single();
+  let inserted;
+  try {
+    inserted = await sb
+      .from("video_jobs")
+      .insert({
+        project_id: projectId,
+        source_path: sourcePath,
+        source_filename: file.name,
+        source_size_bytes: file.size,
+        source_mime_type: file.type || "application/octet-stream",
+        source_kind: "upload",
+        status: "queued",
+      })
+      .select("*")
+      .single();
+  } catch (e) {
+    const insMsg = e instanceof Error ? e.message : String(e);
+    console.error("[clipper][backend] video_jobs insert request failed", {
+      step: "video_jobs_insert",
+      projectId,
+      sourcePath,
+      fileName: file.name,
+      fileSize: file.size,
+      error: insMsg,
+    });
+    throw new Error(
+      `Step failed: video_jobs_insert. project_id=${projectId}, source_path=${sourcePath}. Error: ${insMsg}`,
+    );
+  }
 
   const row = requireData(inserted.data as VideoJobRow | null, inserted.error, "Create video job");
   console.log("[clipper][backend] uploadSourceVideoAndCreateJob:created", {
@@ -514,12 +560,22 @@ export async function uploadSourceVideoAndCreateJob(
   // Trigger processing in background so UI can start polling this exact job immediately.
   void (async () => {
     try {
+      const processJobUrl = "/api/process-job";
       const res = await fetch("/api/process-job", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ jobId: row.id }),
       });
       const text = await res.text();
+      if (!res.ok) {
+        console.error("[clipper][backend] process-job http failure", {
+          step: "process_job_post",
+          url: processJobUrl,
+          httpStatus: res.status,
+          body: text,
+          jobId: row.id,
+        });
+      }
       const parsed = parseProcessJobApiPayload(res, text, row.id);
       console.log("[process-job response]", parsed);
       const latest = await fetchVideoJobById(row.id);
@@ -529,7 +585,13 @@ export async function uploadSourceVideoAndCreateJob(
         error_message: latest.error_message ?? null,
       });
     } catch (e) {
-      console.error("[process-job error]", e);
+      const processMsg = e instanceof Error ? e.message : String(e);
+      console.error("[process-job error]", {
+        step: "process_job_post",
+        url: "/api/process-job",
+        jobId: row.id,
+        error: processMsg,
+      });
     }
   })();
 

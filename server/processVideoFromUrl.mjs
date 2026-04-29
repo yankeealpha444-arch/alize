@@ -198,6 +198,99 @@ function log(tag, ...args) {
   console.log(`[clipper-worker] ${tag}`, ...args);
 }
 
+async function completeUploadTimeoutFallback({
+  sb,
+  jobId,
+  projectId,
+  sourcePath,
+  supabaseUrl,
+  sourceDurationSec,
+  jobMetadata,
+}) {
+  const fallbackUrl = `${supabaseUrl}/storage/v1/object/public/${VIDEO_UPLOAD_BUCKET}/${sourcePath}`;
+  const segments = enforceShortsDurationWindows(
+    computeClipWindows(Number.isFinite(sourceDurationSec) ? sourceDurationSec : 0),
+    Number.isFinite(sourceDurationSec) ? sourceDurationSec : 0,
+  ).slice(0, 3);
+
+  const clipRows = segments.map(([start, end], i) => ({
+    job_id: jobId,
+    project_id: projectId,
+    label: `Clip ${i + 1}`,
+    start_time_sec: start,
+    end_time_sec: end,
+    duration_sec: Math.max(1, end - start),
+    score: heuristicScore(i),
+    caption: `MVP timeout fallback clip ${i + 1}`,
+    thumbnail_url: null,
+    video_url: fallbackUrl,
+    status: "ready",
+  }));
+
+  const { data: existingClips, error: existingErr } = await sb
+    .from("video_clips")
+    .select("id,label")
+    .eq("job_id", jobId)
+    .order("created_at", { ascending: true });
+  if (existingErr) throw new Error(existingErr.message || "Failed reading existing fallback clips");
+
+  const resolvedClipIds = [];
+  for (const row of clipRows) {
+    const prev = (existingClips || []).find((c) => c.label === row.label);
+    if (prev?.id) {
+      const { error: upErr } = await sb
+        .from("video_clips")
+        .update(row)
+        .eq("id", prev.id);
+      if (upErr) throw new Error(upErr.message || "Failed updating fallback clip row");
+      resolvedClipIds.push(prev.id);
+    } else {
+      const { data: ins, error: insErr } = await sb
+        .from("video_clips")
+        .insert(row)
+        .select("id")
+        .single();
+      if (insErr) throw new Error(insErr.message || "Failed inserting fallback clip row");
+      resolvedClipIds.push(ins.id);
+    }
+  }
+
+  const completedMeta = {
+    ...jobMetadata,
+    worker: {
+      ...(jobMetadata.worker || {}),
+      stage: "completed",
+      stage_updated_at: new Date().toISOString(),
+      pipeline: "upload-timeout-fallback",
+      timeout_fallback: true,
+      timeout_fallback_video_url: fallbackUrl,
+      timeout_fallback_segments: segments,
+    },
+  };
+
+  const { data: completedRow, error: completeErr } = await sb
+    .from("video_jobs")
+    .update({
+      status: "completed",
+      error_message: null,
+      updated_at: new Date().toISOString(),
+      metadata: completedMeta,
+    })
+    .eq("id", jobId)
+    .eq("status", "processing")
+    .select("id,status")
+    .maybeSingle();
+  if (completeErr) throw new Error(completeErr.message || "Failed to mark timeout fallback completed");
+  if (!completedRow) throw new Error("Timeout fallback completion update skipped (job not processing)");
+
+  log("timeout fallback completed", {
+    id: jobId,
+    clip_count: resolvedClipIds.length,
+    source_path: sourcePath,
+    fallback_url: fallbackUrl,
+  });
+}
+
 function formatExecError(err) {
   if (!err) return "Unknown command error";
   if (err instanceof Error) {
@@ -363,6 +456,7 @@ export async function processVideoFromUrl(job) {
   const sb = createClient(supabaseUrl, supabaseKey);
   const jobId = job.id;
   const projectId = job.project_id;
+  const sourcePathForUpload = String(job.source_path || "").trim();
   let jobMetadata =
     job.metadata && typeof job.metadata === "object" && !Array.isArray(job.metadata) ? job.metadata : {};
   const sourceKind = String(job.source_kind || "").trim();
@@ -373,6 +467,7 @@ export async function processVideoFromUrl(job) {
 
   const tmpRoot = path.join(os.tmpdir(), "alize-clipper", jobId);
   fs.mkdirSync(tmpRoot, { recursive: true });
+  let probedDurationSec = 0;
 
   try {
     log("job claimed", { id: jobId, status: "processing", source_kind: sourceKind || null, source_url: pageUrl || null });
@@ -501,6 +596,7 @@ export async function processVideoFromUrl(job) {
     const durationSec = await withTimeout(FFPROBE_TIMEOUT_MS, "ffprobe duration", async () => {
       return await ffprobeDurationSec(inputMediaSource);
     });
+    probedDurationSec = Number.isFinite(durationSec) ? durationSec : 0;
     log("ffprobe duration", { jobId, duration_sec: durationSec });
     step(7, "ffprobe completed", { durationSec });
     log("source duration_sec", durationSec);
@@ -819,6 +915,31 @@ export async function processVideoFromUrl(job) {
     log("processing completed", jobId);
   } catch (err) {
     const msg = formatExecError(err);
+    const isTimeout = /step timeout/i.test(msg);
+    const isUploadTimeoutFallbackEligible =
+      isTimeout &&
+      sourceKind === "upload" &&
+      Boolean(sourcePathForUpload) &&
+      !String(sourcePathForUpload).includes(FORBIDDEN_PLACEHOLDER_HOST);
+
+    if (isUploadTimeoutFallbackEligible) {
+      try {
+        await completeUploadTimeoutFallback({
+          sb,
+          jobId,
+          projectId,
+          sourcePath: sourcePathForUpload,
+          supabaseUrl,
+          sourceDurationSec: probedDurationSec,
+          jobMetadata,
+        });
+        return;
+      } catch (fallbackErr) {
+        const fallbackMsg = formatExecError(fallbackErr);
+        log("timeout fallback failed", { id: jobId, error_message: fallbackMsg });
+      }
+    }
+
     await sb
       .from("video_jobs")
       .update({
