@@ -502,32 +502,38 @@ export async function uploadSourceVideoAndCreateJob(
     sourcePath: row.source_path,
   });
 
-  let res: Response;
-  let text: string;
-  try {
-    res = await fetch("/api/process-job", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ jobId: row.id }),
-    });
-    text = await res.text();
-  } catch (e) {
-    const netMsg = e instanceof Error ? e.message : String(e);
-    console.error("[process-job error]", e);
-    throw new Error(mapServiceError(netMsg, "Could not reach clip processor"));
-  }
+  const processJob: ProcessJobApiPayload = {
+    ok: true,
+    httpStatus: 202,
+    job_id: row.id,
+    status: "processing",
+    error_message: null,
+    rawBodySnippet: null,
+  };
 
-  const processJob = parseProcessJobApiPayload(res, text, row.id);
-  console.log("[process-job response]", processJob);
+  // Trigger processing in background so UI can start polling this exact job immediately.
+  void (async () => {
+    try {
+      const res = await fetch("/api/process-job", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId: row.id }),
+      });
+      const text = await res.text();
+      const parsed = parseProcessJobApiPayload(res, text, row.id);
+      console.log("[process-job response]", parsed);
+      const latest = await fetchVideoJobById(row.id);
+      console.log("[clipper][backend] uploadSourceVideoAndCreateJob:after-process-job", {
+        jobId: latest.id,
+        status: latest.status,
+        error_message: latest.error_message ?? null,
+      });
+    } catch (e) {
+      console.error("[process-job error]", e);
+    }
+  })();
 
-  const latest = await fetchVideoJobById(row.id);
-  console.log("[clipper][backend] uploadSourceVideoAndCreateJob:after-process-job", {
-    jobId: latest.id,
-    status: latest.status,
-    error_message: latest.error_message ?? null,
-  });
-
-  return { job: latest, processJob };
+  return { job: row, processJob };
 }
 
 export async function createVideoJobFromSourceUrl(projectId: string, sourceUrl: string): Promise<VideoJobRow> {
