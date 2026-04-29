@@ -87,9 +87,9 @@ export default function AiCeoGuide() {
 
   const canAnalyze = useMemo(() => inputText.trim().length > 0 && !loading, [inputText, loading]);
 
-  const resolveProjectId = async (): Promise<string> => {
+  const resolveProjectId = async (): Promise<number> => {
     const stored = localStorage.getItem("alize_projectId") || "default";
-    const pid = String(stored).trim() || "default";
+    const numericStored = Number(String(stored).trim());
     const sb = supabase as unknown as {
       from: (table: string) => {
         select: (cols: string) => {
@@ -102,12 +102,17 @@ export default function AiCeoGuide() {
         };
       };
     };
-    const existsRes = await sb.from("projects").select("id").eq("id", pid).limit(1);
-    const exists = Boolean(existsRes.data && existsRes.data.length > 0);
-    if (exists) return pid;
-    const fallbackRes = await sb.from("projects").select("id").order("created_at", { ascending: false }).limit(1);
-    const fallback = fallbackRes.data?.[0]?.id;
-    return typeof fallback === "string" && fallback.trim() ? fallback.trim() : pid;
+    if (Number.isFinite(numericStored) && numericStored > 0) return numericStored;
+
+    const specRes = await sb.from("project_specs").select("project_id").order("created_at", { ascending: false }).limit(1);
+    const specProjectId = Number(specRes.data?.[0]?.project_id);
+    if (Number.isFinite(specProjectId) && specProjectId > 0) return specProjectId;
+
+    const outputRes = await sb.from("project_outputs").select("project_id").order("created_at", { ascending: false }).limit(1);
+    const outputProjectId = Number(outputRes.data?.[0]?.project_id);
+    if (Number.isFinite(outputProjectId) && outputProjectId > 0) return outputProjectId;
+
+    throw new Error("Could not resolve project context for AI CEO.");
   };
 
   const onAnalyze = async () => {
@@ -139,7 +144,7 @@ export default function AiCeoGuide() {
       const latestSpecRes = await sb
         .from("project_specs")
         .select("version")
-        .eq("project_id", projectId)
+        .eq("project_id", String(projectId))
         .order("version", { ascending: false })
         .limit(1);
       const latestSpecVersion = Number(latestSpecRes.data?.[0]?.version ?? 0) || 0;
@@ -166,7 +171,7 @@ export default function AiCeoGuide() {
       const latestOutputRes = await sb
         .from("project_outputs")
         .select("version_number")
-        .eq("project_id", projectId)
+        .eq("project_id", String(projectId))
         .order("version_number", { ascending: false })
         .limit(1);
       const latestOutputVersion = Number(latestOutputRes.data?.[0]?.version_number ?? 0) || 0;
