@@ -87,12 +87,9 @@ export default function LinkClipperMvp() {
   const [progressPct, setProgressPct] = useState(0);
   const [progressStage, setProgressStage] = useState<"idle" | "uploading" | "processing" | "completed" | "failed">("idle");
   const [progressStepText, setProgressStepText] = useState("Idle");
-  const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [shouldScrollToResults, setShouldScrollToResults] = useState(false);
-  const [previewObjectUrl, setPreviewObjectUrl] = useState<string | null>(null);
-  const [showPreviewFallback, setShowPreviewFallback] = useState(false);
   const [clipVideoErrors, setClipVideoErrors] = useState<Record<string, boolean>>({});
-  const [clipVideoReady, setClipVideoReady] = useState<Record<string, boolean>>({});
+  const [selectedFileName, setSelectedFileName] = useState<string>("");
   const [uploadDiagnostics, setUploadDiagnostics] = useState<{
     file: { name: string; size: number; mime: string };
     probe: Record<string, unknown>;
@@ -100,11 +97,6 @@ export default function LinkClipperMvp() {
     jobId: string | null;
     dbStatus: string | null;
     dbError: string | null;
-    uploadState?: {
-      uploadStarted: boolean;
-      storageUploadCompleted: boolean;
-      jobCreated: boolean;
-    };
   } | null>(null);
 
   const resultsRef = useRef<HTMLElement | null>(null);
@@ -173,18 +165,11 @@ export default function LinkClipperMvp() {
       setProgressStage("failed");
       setProgressStepText("Failed");
       setMessage("Upload did not start properly. Please try again or use a smaller MP4.");
-      setShowDiagnostics(true);
-      setShowPreviewFallback(true);
       setUploadDiagnostics((prev) =>
         prev
           ? {
               ...prev,
               dbError: prev.dbError || "Upload did not start properly. Please try again or use a smaller MP4.",
-              uploadState: {
-                uploadStarted: true,
-                storageUploadCompleted: false,
-                jobCreated: false,
-              },
             }
           : prev,
       );
@@ -198,32 +183,10 @@ export default function LinkClipperMvp() {
       if (latestJobStatus === "queued" || latestJobStatus === "processing" || !latestJobStatus) {
         setIsGenerating(false);
         setMessage("Processing took too long. Please refresh and try a smaller MP4.");
-        if (previewObjectUrl) {
-          setShowPreviewFallback(true);
-        }
       }
     }, 90000);
     return () => window.clearTimeout(timer);
-  }, [activeJobId, isGenerating, latestJobStatus, previewObjectUrl]);
-
-  useEffect(() => {
-    return () => {
-      if (previewObjectUrl) URL.revokeObjectURL(previewObjectUrl);
-    };
-  }, [previewObjectUrl]);
-
-  useEffect(() => {
-    if (activeJobId && latestJobStatus === "failed" && previewObjectUrl) {
-      setShowPreviewFallback(true);
-      setIsGenerating(false);
-    }
-  }, [activeJobId, latestJobStatus, previewObjectUrl]);
-
-  useEffect(() => {
-    if (clips.length > 0) {
-      setShowPreviewFallback(false);
-    }
-  }, [clips.length]);
+  }, [activeJobId, isGenerating, latestJobStatus]);
 
   useEffect(() => {
     if (!shouldScrollToResults || isLoading || clips.length === 0) return;
@@ -254,39 +217,17 @@ export default function LinkClipperMvp() {
     setProgressPct(5);
     setProgressStepText("Uploading video");
     setMessage("");
-    setShowDiagnostics(false);
-    setShowPreviewFallback(true);
     setClipVideoErrors({});
-    setClipVideoReady({});
+    setSelectedFileName(selectedFile.name);
     setUploadDiagnostics(null);
     startedAtRef.current = Date.now();
-
-    if (previewObjectUrl) {
-      URL.revokeObjectURL(previewObjectUrl);
-      setPreviewObjectUrl(null);
-    }
-
-    const objectUrl = URL.createObjectURL(selectedFile);
-    setPreviewObjectUrl(objectUrl);
 
     const fileMeta = {
       name: selectedFile.name,
       size: selectedFile.size,
       mime: selectedFile.type || "unknown",
     };
-    setUploadDiagnostics({
-      file: fileMeta,
-      probe: {},
-      processJob: null,
-      jobId: null,
-      dbStatus: null,
-      dbError: null,
-      uploadState: {
-        uploadStarted: true,
-        storageUploadCompleted: false,
-        jobCreated: false,
-      },
-    });
+    setUploadDiagnostics(null);
 
     if (selectedFile.size > MAX_MVP_UPLOAD_BYTES) {
       setIsGenerating(false);
@@ -294,7 +235,6 @@ export default function LinkClipperMvp() {
       setProgressStepText("Failed");
       setProgressPct(0);
       setMessage(MAX_MVP_UPLOAD_MESSAGE);
-      setShowPreviewFallback(true);
       setUploadDiagnostics({
         file: fileMeta,
         probe: {},
@@ -302,11 +242,6 @@ export default function LinkClipperMvp() {
         jobId: null,
         dbStatus: null,
         dbError: MAX_MVP_UPLOAD_MESSAGE,
-        uploadState: {
-          uploadStarted: true,
-          storageUploadCompleted: false,
-          jobCreated: false,
-        },
       });
       setSelectedFile(null);
       return;
@@ -334,11 +269,6 @@ export default function LinkClipperMvp() {
         jobId: job.id,
         dbStatus: job.status,
         dbError: job.error_message,
-        uploadState: {
-          uploadStarted: true,
-          storageUploadCompleted: true,
-          jobCreated: true,
-        },
       });
 
       console.log("[clipper][upload] terminal snapshot", {
@@ -359,14 +289,12 @@ export default function LinkClipperMvp() {
         setIsGenerating(false);
         setProgressStage("failed");
         setProgressStepText("Failed");
-        setShowPreviewFallback(true);
         setMessage(diagErr || "Clipping failed.");
       } else {
         setIsGenerating(true);
         setProgressStage("processing");
         setProgressStepText("Processing clips");
         setProgressPct((prev) => Math.max(prev, 80));
-        setShowPreviewFallback(false);
       }
 
       await queryClient.invalidateQueries({ queryKey: ["clips", pid] });
@@ -382,7 +310,6 @@ export default function LinkClipperMvp() {
       setProgressStage("failed");
       setProgressStepText("Failed");
       setProgressPct(0);
-      setShowPreviewFallback(true);
       const errText = err instanceof Error && err.message ? err.message : "Could not process uploaded file.";
       setMessage(errText);
       setUploadDiagnostics({
@@ -392,11 +319,6 @@ export default function LinkClipperMvp() {
         jobId: null,
         dbStatus: null,
         dbError: errText,
-        uploadState: {
-          uploadStarted: true,
-          storageUploadCompleted: false,
-          jobCreated: false,
-        },
       });
     }
   };
@@ -410,15 +332,15 @@ export default function LinkClipperMvp() {
     "";
   const isFailed = latestJobStatus === "failed" || Boolean(message?.trim()) || Boolean(latestJobError?.trim());
   const hasNoJob =
-    !activeJobId && !latestJobStatus && !message && !uploadDiagnostics && !showPreviewFallback;
+    !activeJobId && !latestJobStatus && !message && !uploadDiagnostics;
   const showProgressPanel =
-    (((isQueuedOrProcessing || isGenerating) && !showPreviewFallback) ||
+    (((isQueuedOrProcessing || isGenerating) ||
       (progressStage === "completed" && progressPct === 100)) &&
-    !isFailed;
+      !isFailed);
   const displayClips = clips
     .filter((clip) => !(clip.video_url?.includes("interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4")))
     .slice(0, 3);
-  const showDevDiagnostics = localStorage.getItem("alize_show_clipper_diagnostics") === "1";
+  const showFinalClips = latestJobStatus === "completed" && !isGenerating && displayClips.length > 0;
 
   console.log("[clips-render-final]", {
     isGenerating,
@@ -469,6 +391,11 @@ export default function LinkClipperMvp() {
             >
               {isGenerating ? "Generating..." : "Upload and Generate Clips"}
             </button>
+            {selectedFileName ? (
+              <p className="mt-2 text-xs text-muted-foreground">
+                Selected file: {selectedFileName}
+              </p>
+            ) : null}
           </div>
 
           {message ? (
@@ -486,53 +413,7 @@ export default function LinkClipperMvp() {
             </div>
           ) : null}
 
-          {uploadDiagnostics && showDevDiagnostics ? (
-            <div className="mt-4">
-              {showDiagnostics ? (
-                <div className="mt-2 rounded-md border border-dashed border-border/70 bg-muted/30 p-3 text-xs leading-relaxed text-foreground">
-                  <p className="font-semibold text-foreground">Upload diagnostics</p>
-                  <p className="mt-1">
-                    File name: {uploadDiagnostics.file.name}
-                    <br />
-                    Size: {formatBytes(uploadDiagnostics.file.size)} · MIME: {uploadDiagnostics.file.mime}
-                    <br />
-                    MVP upload limit: {formatBytes(MAX_MVP_UPLOAD_BYTES)}
-                    <br />
-                    {typeof uploadDiagnostics.probe.durationSec === "number" ? (
-                      <>
-                        Duration (browser): {Math.round(uploadDiagnostics.probe.durationSec as number)}s · Resolution:{" "}
-                        {uploadDiagnostics.probe.width ?? "?"}×{uploadDiagnostics.probe.height ?? "?"}
-                        <br />
-                      </>
-                    ) : null}
-                    Codec / container hint:{" "}
-                    {typeof uploadDiagnostics.probe.codecHint === "string"
-                      ? uploadDiagnostics.probe.codecHint
-                      : (uploadDiagnostics.probe.error as string) || "unknown (browser could not decode metadata)"}
-                    <br />
-                    Job id: {uploadDiagnostics.jobId ?? "(pending)"}
-                    <br />
-                    upload started: {uploadDiagnostics.uploadState?.uploadStarted ? "yes" : "no"}
-                    <br />
-                    storage upload completed: {uploadDiagnostics.uploadState?.storageUploadCompleted ? "yes" : "no"}
-                    <br />
-                    job created: {uploadDiagnostics.uploadState?.jobCreated ? "yes" : "no"}
-                    <br />
-                    DB status: {uploadDiagnostics.dbStatus ?? "—"} · DB error_message:{" "}
-                    {uploadDiagnostics.dbError ?? "—"}
-                    <br />
-                    process-job: HTTP {uploadDiagnostics.processJob?.httpStatus ?? "—"} · ok:{" "}
-                    {uploadDiagnostics.processJob ? String(uploadDiagnostics.processJob.ok) : "—"} · API status:{" "}
-                    {uploadDiagnostics.processJob?.status ?? "—"}
-                    <br />
-                    process-job error_message: {uploadDiagnostics.processJob?.error_message ?? "—"}
-                    <br />
-                    Failure class: {categorizeFailureCause(uploadDiagnostics.dbError || uploadDiagnostics.processJob?.error_message)}
-                  </p>
-                </div>
-              ) : null}
-            </div>
-          ) : null}
+          {uploadDiagnostics ? null : null}
         </section>
 
         <section ref={resultsRef} className="mt-8">
@@ -566,44 +447,13 @@ export default function LinkClipperMvp() {
             </div>
           ) : null}
 
-          {showPreviewFallback && previewObjectUrl ? (
-            <div className="mt-6">
-              <p className="text-sm font-semibold text-amber-800">
-                {progressStage === "uploading"
-                  ? "Local preview while upload starts"
-                  : "Preview Mode — full original video, not cut clips"}
-              </p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {progressStage === "uploading"
-                  ? "Showing local file preview immediately while upload attempts."
-                  : "Full-source preview only — not separate clips. You can still review your video below."}
-              </p>
-              <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {[1, 2, 3].map((i) => (
-                  <article key={i} className="rounded-xl border border-border/60 bg-card p-3">
-                    <p className="text-sm font-semibold">Preview {i}</p>
-                    <div className="mt-3 aspect-video overflow-hidden rounded-lg border border-border/60 bg-black">
-                      <video
-                        src={previewObjectUrl}
-                        controls
-                        playsInline
-                        preload="metadata"
-                        className="h-full w-full object-contain"
-                      />
-                    </div>
-                  </article>
-                ))}
-              </div>
-            </div>
-          ) : null}
-
           {displayClips.length === 0 && !isQueuedOrProcessing && !isGenerating && hasNoJob ? (
             <p className="text-sm text-muted-foreground">
               No clips yet. Upload an MP4 to get started.
             </p>
           ) : null}
 
-          {displayClips.length > 0 ? (
+          {showFinalClips ? (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {displayClips.map((clip, idx) => {
                 const directUrl = clip.video_url?.trim() ?? "";
@@ -613,7 +463,6 @@ export default function LinkClipperMvp() {
                 const isVideoReady = Boolean(clipVideoReady[clipRenderKey]);
 
                 const label = `Clip ${idx + 1}`;
-                const suggestedReason = idx === 0 ? "Opening hook" : idx === 1 ? "Strong middle moment" : "Later highlight";
 
                 const startSec = Math.max(0, Math.floor(Number(clip.start_time) || 0));
                 const endSec = Math.max(startSec, Math.floor(Number(clip.end_time) || 0));
@@ -637,7 +486,6 @@ export default function LinkClipperMvp() {
                     <p className="text-sm font-semibold">
                       {label}
                     </p>
-                    <p className="mt-1 text-xs text-muted-foreground">{suggestedReason}</p>
 
                     <div className="relative mt-3 aspect-video overflow-hidden rounded-lg border border-border/60 bg-black">
                       {directUrl && !hasVideoLoadError ? (
@@ -715,18 +563,6 @@ export default function LinkClipperMvp() {
                   </article>
                 );
               })}
-            </div>
-          ) : null}
-          {isGenerating && displayClips.length === 0 ? (
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {[1, 2, 3].map((i) => (
-                <article key={`skeleton-${i}`} className="rounded-xl border border-border/60 bg-card p-3">
-                  <p className="text-sm font-semibold">Clip {i}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">Preparing suggested clip...</p>
-                  <div className="mt-3 aspect-video animate-pulse rounded-lg border border-border/60 bg-muted" />
-                  <div className="mt-3 h-8 animate-pulse rounded-md bg-muted" />
-                </article>
-              ))}
             </div>
           ) : null}
         </section>
