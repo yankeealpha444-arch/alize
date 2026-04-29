@@ -127,83 +127,16 @@ function computeClipWindows(durationSec) {
     log("clip windows", { reason: "duration_unknown_or_zero", segments: FALLBACK_UNKNOWN_DURATION_SEGMENTS });
     return FALLBACK_UNKNOWN_DURATION_SEGMENTS.map((x) => [...x]);
   }
-
   const total = Math.floor(T);
-
-  /** Very short source: best-effort 3 tiles (may be <15s each). Never one clip = full length if avoidable. */
-  if (total < INTRO_SKIP_SEC + NUM_CLIPS * 4 + (NUM_CLIPS - 1) * GAP_SEC) {
-    const piece = Math.max(1, Math.floor((total - (NUM_CLIPS - 1) * GAP_SEC) / NUM_CLIPS));
-    const out = [];
-    let at = 0;
-    for (let i = 0; i < NUM_CLIPS; i++) {
-      const s = at;
-      const e = i === NUM_CLIPS - 1 ? total : Math.min(total, at + piece);
-      out.push(clampWindow(s, e, total));
-      at = e + GAP_SEC;
-    }
-    log("clip windows", { reason: "very_short_source", total, segments: out });
-    return out;
-  }
-
-  /** Choose target length (prefer 15–45s each) that fits three windows + gaps after intro skip. */
-  const usable = total - INTRO_SKIP_SEC - (NUM_CLIPS - 1) * GAP_SEC;
-  let L = Math.floor(usable / NUM_CLIPS);
-  L = Math.min(MAX_CLIP_SEC, L);
-  const minSlots = NUM_CLIPS * MIN_CLIP_SEC + (NUM_CLIPS - 1) * GAP_SEC;
-  if (usable >= minSlots) {
-    L = Math.max(MIN_CLIP_SEC, L);
-  }
-  L = Math.max(4, L);
-
-  /**
-   * Viral heuristic zones (launch-safe):
-   *  - early hook: 8–25%
-   *  - middle payoff: 40–55%
-   *  - late tension: 70–85%
-   */
-  const zones = [
-    { name: "early_hook_zone", startPct: 0.08, endPct: 0.25 },
-    { name: "middle_payoff_zone", startPct: 0.4, endPct: 0.55 },
-    { name: "late_high_tension_zone", startPct: 0.7, endPct: 0.85 },
+  const requested = [
+    [0, 30],
+    [30, 60],
+    [60, 90],
   ];
-  const picks = [];
-  for (let i = 0; i < zones.length; i++) {
-    const z = zones[i];
-    const zoneStart = Math.floor(total * z.startPct);
-    const zoneEnd = Math.ceil(total * z.endPct);
-    const zoneSpan = Math.max(1, zoneEnd - zoneStart);
-    let s = zoneStart + Math.max(0, Math.floor((zoneSpan - L) / 2));
-    if (i === 0) s = Math.max(INTRO_SKIP_SEC, s);
-    let e = s + L;
-    if (e > total) {
-      e = total;
-      s = Math.max(i === 0 ? INTRO_SKIP_SEC : 0, e - L);
-    }
-    picks.push([s, e]);
-  }
-
-  // Enforce non-overlap with gap.
-  for (let i = 1; i < picks.length; i++) {
-    if (picks[i][0] < picks[i - 1][1] + GAP_SEC) {
-      const ns = picks[i - 1][1] + GAP_SEC;
-      picks[i][0] = ns;
-      picks[i][1] = ns + L;
-      if (picks[i][1] > total) {
-        picks[i][1] = total;
-        picks[i][0] = Math.max(i === 0 ? INTRO_SKIP_SEC : 0, total - L);
-      }
-    }
-  }
-
-  const out = picks.map(([s, e], i) => {
-    const minStart = i === 0 ? INTRO_SKIP_SEC : 0;
-    return clampWindow(Math.max(minStart, s), e, total);
-  });
+  const out = requested.map(([s, e]) => clampWindow(s, e, total));
   log("clip windows", {
-    reason: "viral_heuristic_zone_selection",
+    reason: "fixed_0_30_60_90_windows",
     total,
-    clipLen: L,
-    zones,
     segments: out,
   });
   return out;
@@ -242,9 +175,9 @@ function enforceShortsDurationWindows(segments, durationSec) {
 
 function heuristicCaption(index, start, end, total) {
   const labels = [
-    "Early hook moment",
-    "Mid-video payoff moment",
-    "Late high-interest moment",
+    "Opening hook",
+    "Strong middle moment",
+    "Later highlight",
   ];
   return labels[index] || `Clip ${index + 1}`;
 }

@@ -92,6 +92,7 @@ export default function LinkClipperMvp() {
   const [previewObjectUrl, setPreviewObjectUrl] = useState<string | null>(null);
   const [showPreviewFallback, setShowPreviewFallback] = useState(false);
   const [clipVideoErrors, setClipVideoErrors] = useState<Record<string, boolean>>({});
+  const [clipVideoReady, setClipVideoReady] = useState<Record<string, boolean>>({});
   const [uploadDiagnostics, setUploadDiagnostics] = useState<{
     file: { name: string; size: number; mime: string };
     probe: Record<string, unknown>;
@@ -256,6 +257,7 @@ export default function LinkClipperMvp() {
     setShowDiagnostics(false);
     setShowPreviewFallback(true);
     setClipVideoErrors({});
+    setClipVideoReady({});
     setUploadDiagnostics(null);
     startedAtRef.current = Date.now();
 
@@ -416,6 +418,7 @@ export default function LinkClipperMvp() {
   const displayClips = clips
     .filter((clip) => !(clip.video_url?.includes("interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4")))
     .slice(0, 3);
+  const showDevDiagnostics = localStorage.getItem("alize_show_clipper_diagnostics") === "1";
 
   console.log("[clips-render-final]", {
     isGenerating,
@@ -431,7 +434,7 @@ export default function LinkClipperMvp() {
       <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
         <div className="max-w-2xl">
           <p className="text-xs font-semibold text-amber-700">
-            CLIPPER_MOBILE_CLIP_RENDER_AND_REAL_CUT_FIX
+            CLIPPER_FINAL_VISIBLE_AND_FAST_CLIPS_FIX
           </p>
           <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             Alize Clips
@@ -442,11 +445,11 @@ export default function LinkClipperMvp() {
           </h1>
 
           <p className="mt-2 text-muted-foreground">
-            Upload a short MP4 and get 3 ready-to-use clips.
+            Upload an MP4 and get 3 suggested Shorts clips.
           </p>
 
           <p className="mt-2 text-xs text-muted-foreground">
-            For best results, upload an MP4 under 25 MB.
+            Best with videos under 25 MB.
           </p>
         </div>
 
@@ -483,15 +486,8 @@ export default function LinkClipperMvp() {
             </div>
           ) : null}
 
-          {uploadDiagnostics ? (
+          {uploadDiagnostics && showDevDiagnostics ? (
             <div className="mt-4">
-              <button
-                type="button"
-                onClick={() => setShowDiagnostics((v) => !v)}
-                className="inline-flex items-center rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-secondary"
-              >
-                {showDiagnostics ? "Hide diagnostics" : "Show diagnostics"}
-              </button>
               {showDiagnostics ? (
                 <div className="mt-2 rounded-md border border-dashed border-border/70 bg-muted/30 p-3 text-xs leading-relaxed text-foreground">
                   <p className="font-semibold text-foreground">Upload diagnostics</p>
@@ -545,6 +541,9 @@ export default function LinkClipperMvp() {
               <p className="text-sm font-medium text-foreground">
                 {progressStage === "completed" && progressPct === 100 ? "Completed" : "Generating clips..."}
               </p>
+              {progressStage === "completed" && progressPct === 100 ? (
+                <p className="mt-1 text-xs text-muted-foreground">3 suggested clips are ready</p>
+              ) : null}
               <p className="mt-1 text-xs text-muted-foreground">{progressStepText}</p>
               <div className="mt-2 h-2 w-full overflow-hidden rounded bg-muted">
                 <div
@@ -611,8 +610,10 @@ export default function LinkClipperMvp() {
                 const canDownload = Boolean(directUrl);
                 const clipRenderKey = `${clip.id}:${directUrl || "no-url"}`;
                 const hasVideoLoadError = Boolean(clipVideoErrors[clipRenderKey]);
+                const isVideoReady = Boolean(clipVideoReady[clipRenderKey]);
 
                 const label = `Clip ${idx + 1}`;
+                const suggestedReason = idx === 0 ? "Opening hook" : idx === 1 ? "Strong middle moment" : "Later highlight";
 
                 const startSec = Math.max(0, Math.floor(Number(clip.start_time) || 0));
                 const endSec = Math.max(startSec, Math.floor(Number(clip.end_time) || 0));
@@ -636,17 +637,22 @@ export default function LinkClipperMvp() {
                     <p className="text-sm font-semibold">
                       {label}
                     </p>
+                    <p className="mt-1 text-xs text-muted-foreground">{suggestedReason}</p>
 
-                    <div className="mt-3 aspect-video overflow-hidden rounded-lg border border-border/60 bg-black">
+                    <div className="relative mt-3 aspect-video overflow-hidden rounded-lg border border-border/60 bg-black">
                       {directUrl && !hasVideoLoadError ? (
                         <video
                           src={directUrl}
                           controls
                           playsInline
                           preload="metadata"
+                          poster={clip.thumbnail_url ?? undefined}
                           className="h-full w-full object-cover"
                           onError={() => {
                             setClipVideoErrors((prev) => ({ ...prev, [clipRenderKey]: true }));
+                          }}
+                          onLoadedData={() => {
+                            setClipVideoReady((prev) => ({ ...prev, [clipRenderKey]: true }));
                           }}
                           onPlay={() => {
                             if (trackedPlayedClipIds.current.has(clip.id)) return;
@@ -667,6 +673,11 @@ export default function LinkClipperMvp() {
                             : "No playable source for this clip yet"}
                         </div>
                       )}
+                      {directUrl && !hasVideoLoadError && !isVideoReady ? (
+                        <div className="absolute inset-0 flex items-center justify-center bg-muted text-xs text-muted-foreground">
+                          Loading clip preview...
+                        </div>
+                      ) : null}
                     </div>
 
                     <p className="mt-2 text-xs text-muted-foreground">
@@ -691,7 +702,7 @@ export default function LinkClipperMvp() {
                             const pid = ensureVideoMvpProjectId();
                             void trackEvent("clip_downloaded", pid, clip.id);
                           }}
-                          className="inline-flex items-center rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-secondary"
+                          className="inline-flex w-full items-center justify-center rounded-md bg-black px-3 py-2 text-xs font-bold text-white hover:bg-neutral-900"
                         >
                           Download MP4
                         </a>
@@ -704,6 +715,18 @@ export default function LinkClipperMvp() {
                   </article>
                 );
               })}
+            </div>
+          ) : null}
+          {isGenerating && displayClips.length === 0 ? (
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {[1, 2, 3].map((i) => (
+                <article key={`skeleton-${i}`} className="rounded-xl border border-border/60 bg-card p-3">
+                  <p className="text-sm font-semibold">Clip {i}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">Preparing suggested clip...</p>
+                  <div className="mt-3 aspect-video animate-pulse rounded-lg border border-border/60 bg-muted" />
+                  <div className="mt-3 h-8 animate-pulse rounded-md bg-muted" />
+                </article>
+              ))}
             </div>
           ) : null}
         </section>
