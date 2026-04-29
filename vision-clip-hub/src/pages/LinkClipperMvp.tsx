@@ -100,9 +100,21 @@ export default function LinkClipperMvp() {
   const startedAtRef = useRef<number | null>(null);
   const processingStartedAtRef = useRef<number | null>(null);
 
+  const nextProcessingProgress = (current: number): number => {
+    if (current < 70) return Math.min(99, current + 2);
+    if (current < 85) return Math.min(99, current + 1);
+    if (current < 94) return Math.min(99, current + 0.4);
+    if (current < 99) return Math.min(99, current + 0.1);
+    return 99;
+  };
+
   useEffect(() => {
     const projectId = ensureVideoMvpProjectId();
     void trackEvent("session_started", projectId, "link_clipper_session");
+  }, []);
+
+  useEffect(() => {
+    console.log("[progress-no95] bundle active");
   }, []);
 
   useEffect(() => {
@@ -134,27 +146,23 @@ export default function LinkClipperMvp() {
       setProgressPct((prev) => {
         if (progressStage === "uploading") {
           setProgressStepText("Uploading video");
-          const started = startedAtRef.current ?? Date.now();
-          const elapsedMs = Date.now() - started;
-          const target = 5 + Math.min(1, elapsedMs / 20000) * 50; // 5 -> 55 in ~20s
-          return Math.max(prev, Math.min(55, target));
+          const next = Math.min(45, prev + 2);
+          console.log("[progress-no95] current progress", next);
+          console.log("[progress-no95] job status", latestJobStatus ?? "uploading");
+          return next;
         }
         if (progressStage === "processing") {
-          const started = processingStartedAtRef.current ?? Date.now();
-          const elapsedMs = Date.now() - started;
-          if (elapsedMs < 25000) {
+          const next = Math.max(45, nextProcessingProgress(prev));
+          if (next < 85) {
             setProgressStepText("Creating clips");
-            const target = 55 + (elapsedMs / 25000) * 30; // 55 -> 85
-            return Math.max(prev, Math.min(85, target));
-          }
-          if (elapsedMs < 70000) {
+          } else if (next < 94) {
             setProgressStepText("Finalising downloads");
-            const target = 85 + ((elapsedMs - 25000) / 45000) * 10; // 85 -> 95
-            return Math.max(prev, Math.min(95, target));
+          } else {
+            setProgressStepText("Almost ready... still processing");
           }
-          setProgressStepText("Almost ready... still processing");
-          const target = 95 + Math.min(3, ((elapsedMs - 70000) / 60000) * 3); // 95 -> 98 slowly
-          return Math.max(prev, Math.min(98, target));
+          console.log("[progress-no95] current progress", next);
+          console.log("[progress-no95] job status", latestJobStatus ?? "processing");
+          return next;
         }
         return prev;
       });
@@ -162,11 +170,11 @@ export default function LinkClipperMvp() {
     tick();
     const timer = window.setInterval(tick, 1000);
     return () => window.clearInterval(timer);
-  }, [isGenerating, progressStage]);
+  }, [isGenerating, progressStage, latestJobStatus]);
 
   useEffect(() => {
     if (!isGenerating) return;
-    if (progressStage === "uploading" && progressPct >= 55) {
+    if (progressStage === "uploading" && progressPct >= 45) {
       setProgressStage("processing");
       setProgressStepText("Creating clips");
       processingStartedAtRef.current = Date.now();
@@ -254,23 +262,9 @@ export default function LinkClipperMvp() {
           return;
         }
 
-        // queued | processing | null: keep status and continue smooth 55-98 band.
+        // queued | processing | null: progress is controlled only by the single tick effect.
         setProgressStage("processing");
-        const started = processingStartedAtRef.current ?? Date.now();
-        if (!processingStartedAtRef.current) processingStartedAtRef.current = started;
-        const elapsedMs = Date.now() - started;
-        if (elapsedMs < 25000) {
-          setProgressStepText("Creating clips");
-          setProgressPct((prev) => Math.max(prev, Math.min(85, 55 + (elapsedMs / 25000) * 30)));
-        } else if (elapsedMs < 70000) {
-          setProgressStepText("Finalising downloads");
-          setProgressPct((prev) => Math.max(prev, Math.min(95, 85 + ((elapsedMs - 25000) / 45000) * 10)));
-        } else {
-          setProgressStepText("Almost ready... still processing");
-          setProgressPct((prev) =>
-            Math.max(prev, Math.min(98, 95 + Math.min(3, ((elapsedMs - 70000) / 60000) * 3))),
-          );
-        }
+        if (!processingStartedAtRef.current) processingStartedAtRef.current = Date.now();
       } catch (err) {
         console.error("[clipper-poll] error", err);
       } finally {
@@ -395,7 +389,7 @@ export default function LinkClipperMvp() {
         setProgressStage("processing");
         processingStartedAtRef.current = Date.now();
         setProgressStepText("Creating clips");
-        setProgressPct((prev) => Math.max(prev, 55));
+        setProgressPct((prev) => Math.max(prev, 45));
       }
 
       await queryClient.invalidateQueries({ queryKey: ["clips", pid] });
@@ -459,6 +453,7 @@ export default function LinkClipperMvp() {
           <p className="text-xs font-semibold text-amber-700">
             CLIPPER_FINAL_VISIBLE_AND_FAST_CLIPS_FIX
           </p>
+          <p className="text-xs font-semibold text-red-600">PROGRESS_FIX_NO_95_ACTIVE</p>
           <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             Alize Clips
           </p>
