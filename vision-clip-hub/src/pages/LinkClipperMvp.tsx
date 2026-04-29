@@ -85,7 +85,8 @@ export default function LinkClipperMvp() {
   const [message, setMessage] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [progressPct, setProgressPct] = useState(0);
-  const [progressStepText, setProgressStepText] = useState("Uploading video");
+  const [progressStage, setProgressStage] = useState<"idle" | "uploading" | "processing" | "completed" | "failed">("idle");
+  const [progressStepText, setProgressStepText] = useState("Idle");
   const [shouldScrollToResults, setShouldScrollToResults] = useState(false);
   const [previewObjectUrl, setPreviewObjectUrl] = useState<string | null>(null);
   const [showPreviewFallback, setShowPreviewFallback] = useState(false);
@@ -115,12 +116,15 @@ export default function LinkClipperMvp() {
   useEffect(() => {
     if (!activeJobId) return;
     if (latestJobStatus === "completed" && clips.length > 0) {
+      setProgressStage("completed");
       setProgressPct(100);
-      setProgressStepText("Finalising downloads");
+      setProgressStepText("Completed");
       setIsGenerating(false);
       startedAtRef.current = null;
     }
     if (latestJobStatus === "failed") {
+      setProgressStage("failed");
+      setProgressStepText("Failed");
       setIsGenerating(false);
       startedAtRef.current = null;
     }
@@ -129,48 +133,30 @@ export default function LinkClipperMvp() {
   useEffect(() => {
     if (!isGenerating || !activeJobId) return;
     const tick = () => {
-      const started = startedAtRef.current ?? Date.now();
-      const elapsedMs = Math.max(0, Date.now() - started);
-      const elapsedSec = elapsedMs / 1000;
-      let target = 12;
-      let step = "Uploading video";
-      if (latestJobStatus === "queued") {
-        target = 20;
-        step = "Uploading video";
-      } else if (latestJobStatus === "processing") {
-        if (elapsedSec < 18) {
-          target = 45;
-          step = "Processing video";
-        } else if (elapsedSec < 50) {
-          target = 72;
-          step = "Creating 3 clips";
-        } else {
-          target = 90;
-          step = "Finalising downloads";
+      setProgressPct((prev) => {
+        if (progressStage === "uploading") {
+          setProgressStepText("Uploading video");
+          return Math.min(80, Math.max(1, prev + 3));
         }
-      } else {
-        // Before first job-status poll lands.
-        if (elapsedSec < 8) {
-          target = 18;
-          step = "Uploading video";
-        } else if (elapsedSec < 35) {
-          target = 55;
-          step = "Processing video";
-        } else if (elapsedSec < 65) {
-          target = 80;
-          step = "Creating 3 clips";
-        } else {
-          target = 92;
-          step = "Finalising downloads";
+        if (progressStage === "processing") {
+          setProgressStepText("Processing clips");
+          return Math.min(95, Math.max(80, prev + 1));
         }
-      }
-      setProgressStepText(step);
-      setProgressPct((prev) => Math.max(prev, Math.min(target, 95)));
+        return prev;
+      });
     };
     tick();
     const timer = window.setInterval(tick, 700);
     return () => window.clearInterval(timer);
-  }, [isGenerating, activeJobId, latestJobStatus]);
+  }, [isGenerating, activeJobId, progressStage]);
+
+  useEffect(() => {
+    if (!isGenerating) return;
+    if (progressStage === "uploading" && progressPct >= 80) {
+      setProgressStage("processing");
+      setProgressStepText("Processing clips");
+    }
+  }, [isGenerating, progressStage, progressPct]);
 
   useEffect(() => {
     if (!activeJobId || !isGenerating) return;
@@ -230,6 +216,7 @@ export default function LinkClipperMvp() {
     }
     setActiveJobId(null);
     setIsGenerating(true);
+    setProgressStage("uploading");
     setProgressPct(6);
     setProgressStepText("Uploading video");
     setMessage("");
@@ -253,6 +240,8 @@ export default function LinkClipperMvp() {
 
     if (selectedFile.size > MAX_MVP_UPLOAD_BYTES) {
       setIsGenerating(false);
+      setProgressStage("failed");
+      setProgressStepText("Failed");
       setProgressPct(0);
       setMessage(MAX_MVP_UPLOAD_MESSAGE);
       setShowPreviewFallback(true);
@@ -308,10 +297,15 @@ export default function LinkClipperMvp() {
 
       if (job.status === "failed") {
         setIsGenerating(false);
+        setProgressStage("failed");
+        setProgressStepText("Failed");
         setShowPreviewFallback(true);
         setMessage(diagErr || "Clipping failed.");
       } else {
         setIsGenerating(true);
+        setProgressStage("processing");
+        setProgressStepText("Processing clips");
+        setProgressPct((prev) => Math.max(prev, 80));
         setShowPreviewFallback(false);
       }
 
@@ -325,6 +319,8 @@ export default function LinkClipperMvp() {
     } catch (err) {
       console.error("[clipper][upload:error]", err);
       setIsGenerating(false);
+      setProgressStage("failed");
+      setProgressStepText("Failed");
       setProgressPct(0);
       setShowPreviewFallback(true);
       const errText = err instanceof Error && err.message ? err.message : "Could not process uploaded file.";
@@ -342,13 +338,17 @@ export default function LinkClipperMvp() {
 
   const isQueuedOrProcessing = latestJobStatus === "queued" || latestJobStatus === "processing";
   const effectiveFailureText =
-    message?.trim() || latestJobError?.trim() || uploadDiagnostics?.dbError?.trim() || "";
+    message?.trim() ||
+    latestJobError?.trim() ||
+    uploadDiagnostics?.dbError?.trim() ||
+    uploadDiagnostics?.processJob?.error_message?.trim() ||
+    "";
   const isFailed = latestJobStatus === "failed" || Boolean(message?.trim()) || Boolean(latestJobError?.trim());
   const hasNoJob =
     !activeJobId && !latestJobStatus && !message && !uploadDiagnostics && !showPreviewFallback;
   const showProgressPanel =
     (((isQueuedOrProcessing || isGenerating) && !showPreviewFallback) ||
-      (latestJobStatus === "completed" && progressPct === 100)) &&
+      (progressStage === "completed" && progressPct === 100)) &&
     !isFailed;
   const displayClips = clips
     .filter((clip) => !(clip.video_url?.includes("interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4")))
@@ -368,7 +368,7 @@ export default function LinkClipperMvp() {
       <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
         <div className="max-w-2xl">
           <p className="text-xs font-semibold text-amber-700">
-            CLIPPER_UPLOAD_ONLY_LOCKED_V1_PROGRESS
+            CLIPPER_UPLOAD_ONLY_LOCKED_V1_PROGRESS_FIX
           </p>
           <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             Alize Clips
@@ -399,7 +399,7 @@ export default function LinkClipperMvp() {
               type="button"
               onClick={() => void handleUploadGenerate()}
               disabled={isGenerating || !selectedFile}
-              className="mt-2 inline-flex w-full items-center justify-center rounded-md border border-border px-4 py-2.5 text-sm font-semibold text-foreground disabled:opacity-60"
+              className="mt-2 inline-flex w-full items-center justify-center rounded-md bg-black px-4 py-2.5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-neutral-500 disabled:text-neutral-100"
             >
               {isGenerating ? "Generating..." : "Upload and Generate Clips"}
             </button>
@@ -454,7 +454,7 @@ export default function LinkClipperMvp() {
           {showProgressPanel ? (
             <div className="max-w-2xl rounded-md border border-border/60 bg-card p-3">
               <p className="text-sm font-medium text-foreground">
-                {latestJobStatus === "completed" && progressPct === 100 ? "Completed" : "Generating clips..."}
+                {progressStage === "completed" && progressPct === 100 ? "Completed" : "Generating clips..."}
               </p>
               <p className="mt-1 text-xs text-muted-foreground">{progressStepText}</p>
               <div className="mt-2 h-2 w-full overflow-hidden rounded bg-muted">
