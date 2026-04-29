@@ -84,6 +84,8 @@ export default function LinkClipperMvp() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [message, setMessage] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
+  const [progressPct, setProgressPct] = useState(0);
+  const [progressStepText, setProgressStepText] = useState("Uploading video");
   const [shouldScrollToResults, setShouldScrollToResults] = useState(false);
   const [previewObjectUrl, setPreviewObjectUrl] = useState<string | null>(null);
   const [showPreviewFallback, setShowPreviewFallback] = useState(false);
@@ -113,6 +115,8 @@ export default function LinkClipperMvp() {
   useEffect(() => {
     if (!activeJobId) return;
     if (latestJobStatus === "completed" && clips.length > 0) {
+      setProgressPct(100);
+      setProgressStepText("Finalising downloads");
       setIsGenerating(false);
       startedAtRef.current = null;
     }
@@ -121,6 +125,52 @@ export default function LinkClipperMvp() {
       startedAtRef.current = null;
     }
   }, [activeJobId, latestJobStatus, clips.length]);
+
+  useEffect(() => {
+    if (!isGenerating || !activeJobId) return;
+    const tick = () => {
+      const started = startedAtRef.current ?? Date.now();
+      const elapsedMs = Math.max(0, Date.now() - started);
+      const elapsedSec = elapsedMs / 1000;
+      let target = 12;
+      let step = "Uploading video";
+      if (latestJobStatus === "queued") {
+        target = 20;
+        step = "Uploading video";
+      } else if (latestJobStatus === "processing") {
+        if (elapsedSec < 18) {
+          target = 45;
+          step = "Processing video";
+        } else if (elapsedSec < 50) {
+          target = 72;
+          step = "Creating 3 clips";
+        } else {
+          target = 90;
+          step = "Finalising downloads";
+        }
+      } else {
+        // Before first job-status poll lands.
+        if (elapsedSec < 8) {
+          target = 18;
+          step = "Uploading video";
+        } else if (elapsedSec < 35) {
+          target = 55;
+          step = "Processing video";
+        } else if (elapsedSec < 65) {
+          target = 80;
+          step = "Creating 3 clips";
+        } else {
+          target = 92;
+          step = "Finalising downloads";
+        }
+      }
+      setProgressStepText(step);
+      setProgressPct((prev) => Math.max(prev, Math.min(target, 95)));
+    };
+    tick();
+    const timer = window.setInterval(tick, 700);
+    return () => window.clearInterval(timer);
+  }, [isGenerating, activeJobId, latestJobStatus]);
 
   useEffect(() => {
     if (!activeJobId || !isGenerating) return;
@@ -180,6 +230,8 @@ export default function LinkClipperMvp() {
     }
     setActiveJobId(null);
     setIsGenerating(true);
+    setProgressPct(6);
+    setProgressStepText("Uploading video");
     setMessage("");
     setShowPreviewFallback(false);
     setUploadDiagnostics(null);
@@ -201,6 +253,7 @@ export default function LinkClipperMvp() {
 
     if (selectedFile.size > MAX_MVP_UPLOAD_BYTES) {
       setIsGenerating(false);
+      setProgressPct(0);
       setMessage(MAX_MVP_UPLOAD_MESSAGE);
       setShowPreviewFallback(true);
       setUploadDiagnostics({
@@ -272,6 +325,7 @@ export default function LinkClipperMvp() {
     } catch (err) {
       console.error("[clipper][upload:error]", err);
       setIsGenerating(false);
+      setProgressPct(0);
       setShowPreviewFallback(true);
       const errText = err instanceof Error && err.message ? err.message : "Could not process uploaded file.";
       setMessage(errText);
@@ -310,7 +364,7 @@ export default function LinkClipperMvp() {
       <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
         <div className="max-w-2xl">
           <p className="text-xs font-semibold text-amber-700">
-            CLIPPER_UPLOAD_ONLY_LOCKED_V1
+            CLIPPER_UPLOAD_ONLY_LOCKED_V1_PROGRESS
           </p>
           <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             Alize Clips
@@ -394,9 +448,17 @@ export default function LinkClipperMvp() {
 
         <section ref={resultsRef} className="mt-8">
           {(isQueuedOrProcessing || isGenerating) && !showPreviewFallback ? (
-            <p className="text-sm text-muted-foreground">
-              Generating clips...
-            </p>
+            <div className="max-w-2xl rounded-md border border-border/60 bg-card p-3">
+              <p className="text-sm font-medium text-foreground">Generating clips...</p>
+              <p className="mt-1 text-xs text-muted-foreground">{progressStepText}</p>
+              <div className="mt-2 h-2 w-full overflow-hidden rounded bg-muted">
+                <div
+                  className="h-full rounded bg-foreground transition-all duration-500"
+                  style={{ width: `${Math.max(0, Math.min(100, progressPct))}%` }}
+                />
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">{Math.round(progressPct)}%</p>
+            </div>
           ) : null}
 
           {isFailed ? (
