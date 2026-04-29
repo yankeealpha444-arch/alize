@@ -392,10 +392,76 @@ export function getExportDownloadUrl(exp: ClipExportRow): string | null {
   return null;
 }
 
+/** Parsed `/api/process-job` response for upload diagnostics (does not replace DB truth). */
+export type ProcessJobApiPayload = {
+  ok: boolean;
+  httpStatus: number;
+  job_id: string | null;
+  status: string | null;
+  error_message: string | null;
+  rawBodySnippet: string | null;
+};
+
+export type UploadSourceVideoResult = {
+  job: VideoJobRow;
+  processJob: ProcessJobApiPayload;
+};
+
+function parseProcessJobApiPayload(res: Response, text: string, fallbackJobId: string): ProcessJobApiPayload {
+  const rawBodySnippet = text ? text.slice(0, 1200) : null;
+  let json: Record<string, unknown> | null = null;
+  try {
+    json = text ? (JSON.parse(text) as Record<string, unknown>) : null;
+  } catch {
+    return {
+      ok: false,
+      httpStatus: res.status,
+      job_id: fallbackJobId,
+      status: "failed",
+      error_message: text || `HTTP ${res.status}`,
+      rawBodySnippet,
+    };
+  }
+  if (!json || typeof json !== "object") {
+    return {
+      ok: res.ok,
+      httpStatus: res.status,
+      job_id: fallbackJobId,
+      status: null,
+      error_message: null,
+      rawBodySnippet,
+    };
+  }
+  const ok = "ok" in json ? Boolean(json.ok) : res.ok;
+  const jobIdRaw = json.job_id ?? json.jobId;
+  const job_id =
+    typeof jobIdRaw === "string" && jobIdRaw.trim() ? jobIdRaw.trim() : fallbackJobId;
+  const status = typeof json.status === "string" ? json.status : null;
+  const errRaw = json.error_message ?? json.error;
+  const error_message = typeof errRaw === "string" && errRaw.trim() ? errRaw.trim() : null;
+  return {
+    ok,
+    httpStatus: res.status,
+    job_id,
+    status,
+    error_message,
+    rawBodySnippet,
+  };
+}
+
+async function fetchVideoJobById(jobId: string): Promise<VideoJobRow> {
+  const sb = asTableClient();
+  const res = await sb.from("video_jobs").select("*").eq("id", jobId).limit(1);
+  const rows = requireData(res.data, res.error, "Fetch video job by id") as VideoJobRow[];
+  const row = rows[0];
+  if (!row) throw new Error("Fetch video job by id: empty response");
+  return row;
+}
+
 export async function uploadSourceVideoAndCreateJob(
   projectId: string,
   file: File,
-): Promise<VideoJobRow> {
+): Promise<UploadSourceVideoResult> {
   console.log("[clipper][backend] uploadSourceVideoAndCreateJob:start", {
     projectId,
     fileName: file.name,
@@ -422,58 +488,46 @@ export async function uploadSourceVideoAndCreateJob(
       source_filename: file.name,
       source_size_bytes: file.size,
       source_mime_type: file.type || "application/octet-stream",
+      source_kind: "upload",
       status: "queued",
     })
     .select("*")
     .single();
 
+  const row = requireData(inserted.data as VideoJobRow | null, inserted.error, "Create video job");
+  console.log("[clipper][backend] uploadSourceVideoAndCreateJob:created", {
+    projectId,
+    createdJobId: row.id,
+    status: row.status,
+    sourcePath: row.source_path,
+  });
+
+  let res: Response;
+  let text: string;
   try {
-    const row = requireData(inserted.data as VideoJobRow | null, inserted.error, "Create video job");
-    console.log("[clipper][backend] uploadSourceVideoAndCreateJob:created", {
-      projectId,
-      createdJobId: row.id,
-      status: row.status,
-      sourcePath: row.source_path,
-    });
-    await fetch("/api/process-job", {
+    res = await fetch("/api/process-job", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ jobId: row.id })
-    })
-      .then(async (res) => {
-        const text = await res.text();
-        let json: unknown = null;
-        try {
-          json = text ? JSON.parse(text) : null;
-        } catch {
-          json = {
-            ok: false,
-            jobId: row.id,
-            final_status: "failed",
-            error_message: text || `HTTP ${res.status}`,
-          };
-        }
-        console.log("[process-job response]", json);
-        if (json && typeof json === "object" && "ok" in json && json.ok === false) {
-          const errMsg =
-            (typeof json.error_message === "string" && json.error_message.trim()) ||
-            (typeof json.error === "string" && json.error.trim()) ||
-            `process-job failed (HTTP ${res.status})`;
-          throw new Error(errMsg);
-        }
-        if (!res.ok) {
-          console.error("[process-job error]", { status: res.status, text });
-        }
-      })
-      .catch(err => {
-        console.error("[process-job error]", err);
-        throw err;
-      });
-    return row;
+      body: JSON.stringify({ jobId: row.id }),
+    });
+    text = await res.text();
   } catch (e) {
-    const msg = e instanceof Error ? e.message : undefined;
-    throw new Error(mapServiceError(msg, "Create video job failed"));
+    const netMsg = e instanceof Error ? e.message : String(e);
+    console.error("[process-job error]", e);
+    throw new Error(mapServiceError(netMsg, "Could not reach clip processor"));
   }
+
+  const processJob = parseProcessJobApiPayload(res, text, row.id);
+  console.log("[process-job response]", processJob);
+
+  const latest = await fetchVideoJobById(row.id);
+  console.log("[clipper][backend] uploadSourceVideoAndCreateJob:after-process-job", {
+    jobId: latest.id,
+    status: latest.status,
+    error_message: latest.error_message ?? null,
+  });
+
+  return { job: latest, processJob };
 }
 
 export async function createVideoJobFromSourceUrl(projectId: string, sourceUrl: string): Promise<VideoJobRow> {

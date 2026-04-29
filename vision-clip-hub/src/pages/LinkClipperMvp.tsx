@@ -5,7 +5,11 @@ import { useClips } from "@/hooks/useClips";
 import { flowStore } from "@/store/flowStore";
 import { ensureVideoMvpProjectId } from "../../../src/lib/videoMvpProject";
 import { trackEvent } from "../../../src/lib/trackingEvents";
-import { createVideoJobFromSourceUrl, uploadSourceVideoAndCreateJob } from "@/lib/mvp/videoClipperBackend";
+import {
+  createVideoJobFromSourceUrl,
+  uploadSourceVideoAndCreateJob,
+  type ProcessJobApiPayload,
+} from "@/lib/mvp/videoClipperBackend";
 
 function formatTime(sec: number): string {
   if (!Number.isFinite(sec)) return "0s";
@@ -32,6 +36,60 @@ function isValidPublicVideoUrl(value: string): boolean {
   }
 }
 
+function formatBytes(n: number): string {
+  if (!Number.isFinite(n) || n < 0) return "?";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function categorizeFailureCause(raw: string | null | undefined): string {
+  const m = (raw || "").toLowerCase();
+  if (!m.trim()) return "unknown";
+  if (m.includes("timeout") || m.includes("took too long") || m.includes("processing took too long")) return "timeout";
+  if (m.includes("413") || m.includes("too large") || m.includes("payload") || m.includes("entity too large")) return "file_too_large";
+  if (m.includes("upload") && (m.includes("failed") || m.includes("error"))) return "upload_storage";
+  if (m.includes("storage") && m.includes("error")) return "upload_storage";
+  if (m.includes("ffmpeg") || m.includes("enoent")) return "ffmpeg_or_binary";
+  if (m.includes("codec") || m.includes("invalid data") || m.includes("unsupported") || m.includes("could not")) return "unsupported_or_decode";
+  return "other";
+}
+
+async function probeLocalVideoFile(file: File): Promise<{
+  durationSec?: number;
+  width?: number;
+  height?: number;
+  codecHint?: string;
+}> {
+  const url = URL.createObjectURL(file);
+  try {
+    const video = document.createElement("video");
+    video.preload = "metadata";
+    video.muted = true;
+    video.playsInline = true;
+    video.src = url;
+    await new Promise<void>((resolve, reject) => {
+      const t = window.setTimeout(() => reject(new Error("metadata_timeout")), 20000);
+      video.onloadedmetadata = () => {
+        window.clearTimeout(t);
+        resolve();
+      };
+      video.onerror = () => {
+        window.clearTimeout(t);
+        reject(new Error("metadata_error"));
+      };
+    });
+    const durationSec = Number.isFinite(video.duration) ? video.duration : undefined;
+    const width = video.videoWidth || undefined;
+    const height = video.videoHeight || undefined;
+    const canPlay = video.canPlayType(file.type || "video/mp4") || "";
+    const codecHint = [file.type || "unknown", canPlay ? `canPlayType:${canPlay}` : ""].filter(Boolean).join(" · ");
+    return { durationSec, width, height, codecHint };
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
 export default function LinkClipperMvp() {
   const queryClient = useQueryClient();
 
@@ -43,6 +101,16 @@ export default function LinkClipperMvp() {
   const [message, setMessage] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [shouldScrollToResults, setShouldScrollToResults] = useState(false);
+  const [previewObjectUrl, setPreviewObjectUrl] = useState<string | null>(null);
+  const [showPreviewFallback, setShowPreviewFallback] = useState(false);
+  const [uploadDiagnostics, setUploadDiagnostics] = useState<{
+    file: { name: string; size: number; mime: string };
+    probe: Record<string, unknown>;
+    processJob: ProcessJobApiPayload | null;
+    jobId: string | null;
+    dbStatus: string | null;
+    dbError: string | null;
+  } | null>(null);
 
   const resultsRef = useRef<HTMLElement | null>(null);
   const pendingGeneratedTrack = useRef(false);
@@ -59,11 +127,16 @@ export default function LinkClipperMvp() {
   }, [activeJobId]);
 
   useEffect(() => {
-    if (latestJobStatus === "completed" || clips.length > 0) {
+    if (!activeJobId) return;
+    if (latestJobStatus === "completed" && clips.length > 0) {
       setIsGenerating(false);
       startedAtRef.current = null;
     }
-  }, [latestJobStatus, clips.length]);
+    if (latestJobStatus === "failed") {
+      setIsGenerating(false);
+      startedAtRef.current = null;
+    }
+  }, [activeJobId, latestJobStatus, clips.length]);
 
   useEffect(() => {
     if (!activeJobId || !isGenerating) return;
@@ -71,10 +144,32 @@ export default function LinkClipperMvp() {
       if (latestJobStatus === "queued" || latestJobStatus === "processing" || !latestJobStatus) {
         setIsGenerating(false);
         setMessage("Processing took too long. Please refresh and try a smaller MP4.");
+        if (previewObjectUrl) {
+          setShowPreviewFallback(true);
+        }
       }
     }, 90000);
     return () => window.clearTimeout(timer);
-  }, [activeJobId, isGenerating, latestJobStatus]);
+  }, [activeJobId, isGenerating, latestJobStatus, previewObjectUrl]);
+
+  useEffect(() => {
+    return () => {
+      if (previewObjectUrl) URL.revokeObjectURL(previewObjectUrl);
+    };
+  }, [previewObjectUrl]);
+
+  useEffect(() => {
+    if (activeJobId && latestJobStatus === "failed" && previewObjectUrl) {
+      setShowPreviewFallback(true);
+      setIsGenerating(false);
+    }
+  }, [activeJobId, latestJobStatus, previewObjectUrl]);
+
+  useEffect(() => {
+    if (clips.length > 0) {
+      setShowPreviewFallback(false);
+    }
+  }, [clips.length]);
 
   useEffect(() => {
     if (!shouldScrollToResults || isLoading || clips.length === 0) return;
@@ -107,6 +202,12 @@ export default function LinkClipperMvp() {
     setIsGenerating(true);
     setMessage("");
     startedAtRef.current = Date.now();
+    setUploadDiagnostics(null);
+    setShowPreviewFallback(false);
+    if (previewObjectUrl) {
+      URL.revokeObjectURL(previewObjectUrl);
+      setPreviewObjectUrl(null);
+    }
 
     try {
       flowStore.setSource(trimmed);
@@ -161,34 +262,101 @@ export default function LinkClipperMvp() {
     setActiveJobId(null);
     setIsGenerating(true);
     setMessage("");
+    setShowPreviewFallback(false);
+    setUploadDiagnostics(null);
     startedAtRef.current = Date.now();
+
+    if (previewObjectUrl) {
+      URL.revokeObjectURL(previewObjectUrl);
+      setPreviewObjectUrl(null);
+    }
+
+    const objectUrl = URL.createObjectURL(selectedFile);
+    setPreviewObjectUrl(objectUrl);
+
+    const fileMeta = {
+      name: selectedFile.name,
+      size: selectedFile.size,
+      mime: selectedFile.type || "unknown",
+    };
+
+    let probe: Record<string, unknown> = {};
+    try {
+      const p = await probeLocalVideoFile(selectedFile);
+      probe = { ...p };
+    } catch (e) {
+      probe = { error: e instanceof Error ? e.message : "probe_failed" };
+    }
+
+    console.log("[clipper][upload] client probe", { fileMeta, probe });
+
     try {
       const pid = ensureVideoMvpProjectId();
-      const createdJob = await uploadSourceVideoAndCreateJob(pid, selectedFile);
-      localStorage.setItem(`alize_video_job_id_${pid}`, createdJob.id);
+      const { job, processJob } = await uploadSourceVideoAndCreateJob(pid, selectedFile);
+
+      const diagErr = job.error_message || processJob.error_message;
+      setUploadDiagnostics({
+        file: fileMeta,
+        probe,
+        processJob,
+        jobId: job.id,
+        dbStatus: job.status,
+        dbError: job.error_message,
+      });
+
+      console.log("[clipper][upload] terminal snapshot", {
+        jobId: job.id,
+        dbStatus: job.status,
+        processJobStatus: processJob.status,
+        processJobOk: processJob.ok,
+        error: diagErr,
+        failureCause: categorizeFailureCause(diagErr),
+      });
+
+      localStorage.setItem(`alize_video_job_id_${pid}`, job.id);
       localStorage.setItem(`alize_clips_source_url_${pid}`, selectedFile.name);
-      setActiveJobId(createdJob.id);
+      setActiveJobId(job.id);
       setSelectedFile(null);
+
+      if (job.status === "failed") {
+        setIsGenerating(false);
+        setShowPreviewFallback(true);
+        setMessage(diagErr || "Clipping failed.");
+      } else {
+        setIsGenerating(true);
+        setShowPreviewFallback(false);
+      }
+
       await queryClient.invalidateQueries({ queryKey: ["clips", pid] });
       await queryClient.refetchQueries({
-        queryKey: ["clips", pid, createdJob.id],
+        queryKey: ["clips", pid, job.id],
         type: "active",
       });
       pendingGeneratedTrack.current = true;
       setShouldScrollToResults(true);
     } catch (err) {
-      setMessage(err instanceof Error && err.message ? err.message : "Could not process uploaded file.");
-    } finally {
+      console.error("[clipper][upload:error]", err);
       setIsGenerating(false);
-      if (latestJobStatus !== "queued" && latestJobStatus !== "processing") {
-        startedAtRef.current = null;
-      }
+      setShowPreviewFallback(true);
+      const errText = err instanceof Error && err.message ? err.message : "Could not process uploaded file.";
+      setMessage(errText);
+      setUploadDiagnostics({
+        file: fileMeta,
+        probe,
+        processJob: null,
+        jobId: null,
+        dbStatus: null,
+        dbError: errText,
+      });
     }
   };
 
   const isQueuedOrProcessing = latestJobStatus === "queued" || latestJobStatus === "processing";
-  const isFailed = latestJobStatus === "failed" || Boolean(message);
-  const hasNoJob = !activeJobId && !latestJobStatus;
+  const effectiveFailureText =
+    message?.trim() || latestJobError?.trim() || uploadDiagnostics?.dbError?.trim() || "";
+  const isFailed = latestJobStatus === "failed" || Boolean(message?.trim()) || Boolean(latestJobError?.trim());
+  const hasNoJob =
+    !activeJobId && !latestJobStatus && !message && !uploadDiagnostics && !showPreviewFallback;
   const displayClips = clips
     .filter((clip) => !(clip.video_url?.includes("interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4")))
     .slice(0, 3);
@@ -207,7 +375,7 @@ export default function LinkClipperMvp() {
       <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
         <div className="max-w-2xl">
           <p className="text-xs font-semibold text-amber-700">
-            CLIPPER_FINAL_UPLOAD_STABLE
+            CLIPPER_REALWORLD_DIAG_v1
           </p>
           <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             Alize Clips
@@ -273,10 +441,46 @@ export default function LinkClipperMvp() {
               {message}
             </p>
           ) : null}
+
+          {uploadDiagnostics ? (
+            <div className="mt-4 rounded-md border border-dashed border-border/70 bg-muted/30 p-3 text-xs leading-relaxed text-foreground">
+              <p className="font-semibold text-foreground">Upload diagnostics</p>
+              <p className="mt-1">
+                File name: {uploadDiagnostics.file.name}
+                <br />
+                Size: {formatBytes(uploadDiagnostics.file.size)} · MIME: {uploadDiagnostics.file.mime}
+                <br />
+                {typeof uploadDiagnostics.probe.durationSec === "number" ? (
+                  <>
+                    Duration (browser): {Math.round(uploadDiagnostics.probe.durationSec as number)}s · Resolution:{" "}
+                    {uploadDiagnostics.probe.width ?? "?"}×{uploadDiagnostics.probe.height ?? "?"}
+                    <br />
+                  </>
+                ) : null}
+                Codec / container hint:{" "}
+                {typeof uploadDiagnostics.probe.codecHint === "string"
+                  ? uploadDiagnostics.probe.codecHint
+                  : (uploadDiagnostics.probe.error as string) || "unknown (browser could not decode metadata)"}
+                <br />
+                Job id: {uploadDiagnostics.jobId ?? "(pending)"}
+                <br />
+                DB status: {uploadDiagnostics.dbStatus ?? "—"} · DB error_message:{" "}
+                {uploadDiagnostics.dbError ?? "—"}
+                <br />
+                process-job: HTTP {uploadDiagnostics.processJob?.httpStatus ?? "—"} · ok:{" "}
+                {uploadDiagnostics.processJob ? String(uploadDiagnostics.processJob.ok) : "—"} · API status:{" "}
+                {uploadDiagnostics.processJob?.status ?? "—"}
+                <br />
+                process-job error_message: {uploadDiagnostics.processJob?.error_message ?? "—"}
+                <br />
+                Failure class: {categorizeFailureCause(uploadDiagnostics.dbError || uploadDiagnostics.processJob?.error_message)}
+              </p>
+            </div>
+          ) : null}
         </section>
 
         <section ref={resultsRef} className="mt-8">
-          {isQueuedOrProcessing || isGenerating ? (
+          {(isQueuedOrProcessing || isGenerating) && !showPreviewFallback ? (
             <p className="text-sm text-muted-foreground">
               Generating clips...
             </p>
@@ -288,8 +492,35 @@ export default function LinkClipperMvp() {
                 Failed to generate clips
               </p>
               <p className="mt-1 text-sm text-muted-foreground">
-                {message?.trim() || latestJobError?.trim() || "Unknown error"}
+                {effectiveFailureText || "Unknown error"}
               </p>
+            </div>
+          ) : null}
+
+          {showPreviewFallback && previewObjectUrl ? (
+            <div className="mt-6">
+              <p className="text-sm font-semibold text-amber-800">
+                Preview Mode (clipping failed)
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Full-source preview only — not separate clips. You can still review your video below.
+              </p>
+              <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {[1, 2, 3].map((i) => (
+                  <article key={i} className="rounded-xl border border-border/60 bg-card p-3">
+                    <p className="text-sm font-semibold">Preview {i}</p>
+                    <div className="mt-3 aspect-video overflow-hidden rounded-lg border border-border/60 bg-black">
+                      <video
+                        src={previewObjectUrl}
+                        controls
+                        playsInline
+                        preload="metadata"
+                        className="h-full w-full object-contain"
+                      />
+                    </div>
+                  </article>
+                ))}
+              </div>
             </div>
           ) : null}
 

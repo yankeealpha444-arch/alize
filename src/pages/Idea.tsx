@@ -71,9 +71,13 @@ export default function Idea() {
     try {
       void trackEvent("upload_started", pid, "uploaded_video", { file_name: file.name });
       console.log("[idea] upload started", { fileName: file.name, projectId: pid });
-      const job = await uploadSourceVideoAndCreateJob(pid, file);
+      const { job } = await uploadSourceVideoAndCreateJob(pid, file);
       console.log("[idea] upload finished", { fileName: file.name, projectId: pid });
       console.log("[idea] upload job created", { projectId: pid, jobId: job.id, status: job.status });
+      if (job.status === "failed") {
+        toast.error(userSafeError(new Error(job.error_message || "Processing failed"), "Processing failed"));
+        return;
+      }
       localStorage.setItem(`alize_video_job_id_${pid}`, job.id);
       void trackEvent("job_created", pid, "uploaded_video", { job_id: job.id, file_name: file.name });
       void trackEvent("link_submitted", pid, "uploaded_video", { job_id: job.id, file_name: file.name });
