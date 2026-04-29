@@ -75,6 +75,7 @@ export default function App() {
 
               {/* Primary product: Video MVP (upload → clips → thumbnail → confirm → dashboard) */}
               <Route path="/" element={<Navigate to="/clips" replace />} />
+              {/* PRODUCTION WIRING LOCK: /clips -> LinkClipperMvp via ClipSelectionPage */}
               <Route path="/clips" element={<ClipSelectionPage />} />
               <Route path="/clips-clean" element={<ClipperClean />} />
               <Route path="/clips-clean-v2" element={<ClipperCleanV2 />} />
@@ -98,6 +99,7 @@ export default function App() {
               <Route path="/lsa-v2" element={<LsaFounderV2 />} />
               <Route path="/thumbnail" element={<ThumbnailSelectionPage />} />
               <Route path="/preview" element={<PreviewPage />} />
+              {/* PRODUCTION WIRING LOCK: /video -> same LinkClipperMvp page */}
               <Route path="/video" element={<VideoMVP />} />
               <Route path="/dashboard" element={<DashboardPage />} />
 
