@@ -87,6 +87,7 @@ export default function LinkClipperMvp() {
   const [progressPct, setProgressPct] = useState(0);
   const [progressStage, setProgressStage] = useState<"idle" | "uploading" | "processing" | "completed" | "failed">("idle");
   const [progressStepText, setProgressStepText] = useState("Idle");
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [shouldScrollToResults, setShouldScrollToResults] = useState(false);
   const [previewObjectUrl, setPreviewObjectUrl] = useState<string | null>(null);
   const [showPreviewFallback, setShowPreviewFallback] = useState(false);
@@ -217,9 +218,10 @@ export default function LinkClipperMvp() {
     setActiveJobId(null);
     setIsGenerating(true);
     setProgressStage("uploading");
-    setProgressPct(6);
+    setProgressPct(5);
     setProgressStepText("Uploading video");
     setMessage("");
+    setShowDiagnostics(false);
     setShowPreviewFallback(false);
     setUploadDiagnostics(null);
     startedAtRef.current = Date.now();
@@ -368,7 +370,7 @@ export default function LinkClipperMvp() {
       <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
         <div className="max-w-2xl">
           <p className="text-xs font-semibold text-amber-700">
-            CLIPPER_UPLOAD_ONLY_LOCKED_V1_PROGRESS_FIX
+            CLIPPER_UPLOAD_ONLY_LOCKED_V1_FINAL_UX
           </p>
           <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             Alize Clips
@@ -412,40 +414,51 @@ export default function LinkClipperMvp() {
           ) : null}
 
           {uploadDiagnostics ? (
-            <div className="mt-4 rounded-md border border-dashed border-border/70 bg-muted/30 p-3 text-xs leading-relaxed text-foreground">
-              <p className="font-semibold text-foreground">Upload diagnostics</p>
-              <p className="mt-1">
-                File name: {uploadDiagnostics.file.name}
-                <br />
-                Size: {formatBytes(uploadDiagnostics.file.size)} · MIME: {uploadDiagnostics.file.mime}
-                <br />
-                MVP upload limit: {formatBytes(MAX_MVP_UPLOAD_BYTES)}
-                <br />
-                {typeof uploadDiagnostics.probe.durationSec === "number" ? (
-                  <>
-                    Duration (browser): {Math.round(uploadDiagnostics.probe.durationSec as number)}s · Resolution:{" "}
-                    {uploadDiagnostics.probe.width ?? "?"}×{uploadDiagnostics.probe.height ?? "?"}
+            <div className="mt-4">
+              <button
+                type="button"
+                onClick={() => setShowDiagnostics((v) => !v)}
+                className="inline-flex items-center rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-secondary"
+              >
+                {showDiagnostics ? "Hide diagnostics" : "Show diagnostics"}
+              </button>
+              {showDiagnostics ? (
+                <div className="mt-2 rounded-md border border-dashed border-border/70 bg-muted/30 p-3 text-xs leading-relaxed text-foreground">
+                  <p className="font-semibold text-foreground">Upload diagnostics</p>
+                  <p className="mt-1">
+                    File name: {uploadDiagnostics.file.name}
                     <br />
-                  </>
-                ) : null}
-                Codec / container hint:{" "}
-                {typeof uploadDiagnostics.probe.codecHint === "string"
-                  ? uploadDiagnostics.probe.codecHint
-                  : (uploadDiagnostics.probe.error as string) || "unknown (browser could not decode metadata)"}
-                <br />
-                Job id: {uploadDiagnostics.jobId ?? "(pending)"}
-                <br />
-                DB status: {uploadDiagnostics.dbStatus ?? "—"} · DB error_message:{" "}
-                {uploadDiagnostics.dbError ?? "—"}
-                <br />
-                process-job: HTTP {uploadDiagnostics.processJob?.httpStatus ?? "—"} · ok:{" "}
-                {uploadDiagnostics.processJob ? String(uploadDiagnostics.processJob.ok) : "—"} · API status:{" "}
-                {uploadDiagnostics.processJob?.status ?? "—"}
-                <br />
-                process-job error_message: {uploadDiagnostics.processJob?.error_message ?? "—"}
-                <br />
-                Failure class: {categorizeFailureCause(uploadDiagnostics.dbError || uploadDiagnostics.processJob?.error_message)}
-              </p>
+                    Size: {formatBytes(uploadDiagnostics.file.size)} · MIME: {uploadDiagnostics.file.mime}
+                    <br />
+                    MVP upload limit: {formatBytes(MAX_MVP_UPLOAD_BYTES)}
+                    <br />
+                    {typeof uploadDiagnostics.probe.durationSec === "number" ? (
+                      <>
+                        Duration (browser): {Math.round(uploadDiagnostics.probe.durationSec as number)}s · Resolution:{" "}
+                        {uploadDiagnostics.probe.width ?? "?"}×{uploadDiagnostics.probe.height ?? "?"}
+                        <br />
+                      </>
+                    ) : null}
+                    Codec / container hint:{" "}
+                    {typeof uploadDiagnostics.probe.codecHint === "string"
+                      ? uploadDiagnostics.probe.codecHint
+                      : (uploadDiagnostics.probe.error as string) || "unknown (browser could not decode metadata)"}
+                    <br />
+                    Job id: {uploadDiagnostics.jobId ?? "(pending)"}
+                    <br />
+                    DB status: {uploadDiagnostics.dbStatus ?? "—"} · DB error_message:{" "}
+                    {uploadDiagnostics.dbError ?? "—"}
+                    <br />
+                    process-job: HTTP {uploadDiagnostics.processJob?.httpStatus ?? "—"} · ok:{" "}
+                    {uploadDiagnostics.processJob ? String(uploadDiagnostics.processJob.ok) : "—"} · API status:{" "}
+                    {uploadDiagnostics.processJob?.status ?? "—"}
+                    <br />
+                    process-job error_message: {uploadDiagnostics.processJob?.error_message ?? "—"}
+                    <br />
+                    Failure class: {categorizeFailureCause(uploadDiagnostics.dbError || uploadDiagnostics.processJob?.error_message)}
+                  </p>
+                </div>
+              ) : null}
             </div>
           ) : null}
         </section>
