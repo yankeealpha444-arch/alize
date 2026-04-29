@@ -99,6 +99,11 @@ export default function LinkClipperMvp() {
     jobId: string | null;
     dbStatus: string | null;
     dbError: string | null;
+    uploadState?: {
+      uploadStarted: boolean;
+      storageUploadCompleted: boolean;
+      jobCreated: boolean;
+    };
   } | null>(null);
 
   const resultsRef = useRef<HTMLElement | null>(null);
@@ -133,12 +138,12 @@ export default function LinkClipperMvp() {
   }, [activeJobId, latestJobStatus, clips.length]);
 
   useEffect(() => {
-    if (!isGenerating || !activeJobId) return;
+    if (!isGenerating) return;
     const tick = () => {
       setProgressPct((prev) => {
         if (progressStage === "uploading") {
           setProgressStepText("Uploading video");
-          return Math.min(80, Math.max(1, prev + 3));
+          return Math.min(80, Math.max(5, prev + 3));
         }
         if (progressStage === "processing") {
           setProgressStepText("Processing clips");
@@ -150,7 +155,7 @@ export default function LinkClipperMvp() {
     tick();
     const timer = window.setInterval(tick, 700);
     return () => window.clearInterval(timer);
-  }, [isGenerating, activeJobId, progressStage]);
+  }, [isGenerating, progressStage]);
 
   useEffect(() => {
     if (!isGenerating) return;
@@ -159,6 +164,32 @@ export default function LinkClipperMvp() {
       setProgressStepText("Processing clips");
     }
   }, [isGenerating, progressStage, progressPct]);
+
+  useEffect(() => {
+    if (!isGenerating || progressStage !== "uploading") return;
+    const timer = window.setTimeout(() => {
+      setIsGenerating(false);
+      setProgressStage("failed");
+      setProgressStepText("Failed");
+      setMessage("Upload did not start properly. Please try again or use a smaller MP4.");
+      setShowDiagnostics(true);
+      setShowPreviewFallback(true);
+      setUploadDiagnostics((prev) =>
+        prev
+          ? {
+              ...prev,
+              dbError: prev.dbError || "Upload did not start properly. Please try again or use a smaller MP4.",
+              uploadState: {
+                uploadStarted: true,
+                storageUploadCompleted: false,
+                jobCreated: false,
+              },
+            }
+          : prev,
+      );
+    }, 20000);
+    return () => window.clearTimeout(timer);
+  }, [isGenerating, progressStage]);
 
   useEffect(() => {
     if (!activeJobId || !isGenerating) return;
@@ -223,7 +254,7 @@ export default function LinkClipperMvp() {
     setProgressStepText("Uploading video");
     setMessage("");
     setShowDiagnostics(false);
-    setShowPreviewFallback(false);
+    setShowPreviewFallback(true);
     setClipVideoErrors({});
     setUploadDiagnostics(null);
     startedAtRef.current = Date.now();
@@ -241,6 +272,19 @@ export default function LinkClipperMvp() {
       size: selectedFile.size,
       mime: selectedFile.type || "unknown",
     };
+    setUploadDiagnostics({
+      file: fileMeta,
+      probe: {},
+      processJob: null,
+      jobId: null,
+      dbStatus: null,
+      dbError: null,
+      uploadState: {
+        uploadStarted: true,
+        storageUploadCompleted: false,
+        jobCreated: false,
+      },
+    });
 
     if (selectedFile.size > MAX_MVP_UPLOAD_BYTES) {
       setIsGenerating(false);
@@ -256,6 +300,11 @@ export default function LinkClipperMvp() {
         jobId: null,
         dbStatus: null,
         dbError: MAX_MVP_UPLOAD_MESSAGE,
+        uploadState: {
+          uploadStarted: true,
+          storageUploadCompleted: false,
+          jobCreated: false,
+        },
       });
       setSelectedFile(null);
       return;
@@ -283,6 +332,11 @@ export default function LinkClipperMvp() {
         jobId: job.id,
         dbStatus: job.status,
         dbError: job.error_message,
+        uploadState: {
+          uploadStarted: true,
+          storageUploadCompleted: true,
+          jobCreated: true,
+        },
       });
 
       console.log("[clipper][upload] terminal snapshot", {
@@ -336,6 +390,11 @@ export default function LinkClipperMvp() {
         jobId: null,
         dbStatus: null,
         dbError: errText,
+        uploadState: {
+          uploadStarted: true,
+          storageUploadCompleted: false,
+          jobCreated: false,
+        },
       });
     }
   };
@@ -410,9 +469,18 @@ export default function LinkClipperMvp() {
           </div>
 
           {message ? (
-            <p className="mt-3 text-sm text-foreground">
-              {message}
-            </p>
+            <div className="mt-3">
+              <p className="text-sm text-foreground">{message}</p>
+              {progressStage === "failed" && selectedFile ? (
+                <button
+                  type="button"
+                  onClick={() => void handleUploadGenerate()}
+                  className="mt-2 inline-flex items-center rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-secondary"
+                >
+                  Retry
+                </button>
+              ) : null}
+            </div>
           ) : null}
 
           {uploadDiagnostics ? (
@@ -447,6 +515,12 @@ export default function LinkClipperMvp() {
                       : (uploadDiagnostics.probe.error as string) || "unknown (browser could not decode metadata)"}
                     <br />
                     Job id: {uploadDiagnostics.jobId ?? "(pending)"}
+                    <br />
+                    upload started: {uploadDiagnostics.uploadState?.uploadStarted ? "yes" : "no"}
+                    <br />
+                    storage upload completed: {uploadDiagnostics.uploadState?.storageUploadCompleted ? "yes" : "no"}
+                    <br />
+                    job created: {uploadDiagnostics.uploadState?.jobCreated ? "yes" : "no"}
                     <br />
                     DB status: {uploadDiagnostics.dbStatus ?? "—"} · DB error_message:{" "}
                     {uploadDiagnostics.dbError ?? "—"}
@@ -496,10 +570,14 @@ export default function LinkClipperMvp() {
           {showPreviewFallback && previewObjectUrl ? (
             <div className="mt-6">
               <p className="text-sm font-semibold text-amber-800">
-                Preview Mode — full original video, not cut clips
+                {progressStage === "uploading"
+                  ? "Local preview while upload starts"
+                  : "Preview Mode — full original video, not cut clips"}
               </p>
               <p className="mt-1 text-xs text-muted-foreground">
-                Full-source preview only — not separate clips. You can still review your video below.
+                {progressStage === "uploading"
+                  ? "Showing local file preview immediately while upload attempts."
+                  : "Full-source preview only — not separate clips. You can still review your video below."}
               </p>
               <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 {[1, 2, 3].map((i) => (
