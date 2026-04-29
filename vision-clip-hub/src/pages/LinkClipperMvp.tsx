@@ -91,6 +91,7 @@ export default function LinkClipperMvp() {
   const [shouldScrollToResults, setShouldScrollToResults] = useState(false);
   const [previewObjectUrl, setPreviewObjectUrl] = useState<string | null>(null);
   const [showPreviewFallback, setShowPreviewFallback] = useState(false);
+  const [clipVideoErrors, setClipVideoErrors] = useState<Record<string, boolean>>({});
   const [uploadDiagnostics, setUploadDiagnostics] = useState<{
     file: { name: string; size: number; mime: string };
     probe: Record<string, unknown>;
@@ -223,6 +224,7 @@ export default function LinkClipperMvp() {
     setMessage("");
     setShowDiagnostics(false);
     setShowPreviewFallback(false);
+    setClipVideoErrors({});
     setUploadDiagnostics(null);
     startedAtRef.current = Date.now();
 
@@ -370,7 +372,7 @@ export default function LinkClipperMvp() {
       <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
         <div className="max-w-2xl">
           <p className="text-xs font-semibold text-amber-700">
-            CLIPPER_UPLOAD_ONLY_LOCKED_V1_FINAL_UX
+            CLIPPER_MOBILE_CLIP_RENDER_AND_REAL_CUT_FIX
           </p>
           <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             Alize Clips
@@ -494,7 +496,7 @@ export default function LinkClipperMvp() {
           {showPreviewFallback && previewObjectUrl ? (
             <div className="mt-6">
               <p className="text-sm font-semibold text-amber-800">
-                Preview Mode (clipping failed)
+                Preview Mode — full original video, not cut clips
               </p>
               <p className="mt-1 text-xs text-muted-foreground">
                 Full-source preview only — not separate clips. You can still review your video below.
@@ -529,6 +531,8 @@ export default function LinkClipperMvp() {
               {displayClips.map((clip, idx) => {
                 const directUrl = clip.video_url?.trim() ?? "";
                 const canDownload = Boolean(directUrl);
+                const clipRenderKey = `${clip.id}:${directUrl || "no-url"}`;
+                const hasVideoLoadError = Boolean(clipVideoErrors[clipRenderKey]);
 
                 const label = `Clip ${idx + 1}`;
 
@@ -548,7 +552,7 @@ export default function LinkClipperMvp() {
 
                 return (
                   <article
-                    key={clip.id}
+                    key={clipRenderKey}
                     className="rounded-xl border border-border/60 bg-card p-3"
                   >
                     <p className="text-sm font-semibold">
@@ -556,13 +560,16 @@ export default function LinkClipperMvp() {
                     </p>
 
                     <div className="mt-3 aspect-video overflow-hidden rounded-lg border border-border/60 bg-black">
-                      {directUrl ? (
+                      {directUrl && !hasVideoLoadError ? (
                         <video
                           src={directUrl}
                           controls
                           playsInline
                           preload="metadata"
                           className="h-full w-full object-cover"
+                          onError={() => {
+                            setClipVideoErrors((prev) => ({ ...prev, [clipRenderKey]: true }));
+                          }}
                           onPlay={() => {
                             if (trackedPlayedClipIds.current.has(clip.id)) return;
 
@@ -577,7 +584,9 @@ export default function LinkClipperMvp() {
                         />
                       ) : (
                         <div className="flex h-full items-center justify-center bg-muted text-xs text-muted-foreground">
-                          No playable source for this clip yet
+                          {directUrl
+                            ? "Clip preview failed to load. Tap Download MP4."
+                            : "No playable source for this clip yet"}
                         </div>
                       )}
                     </div>
