@@ -1,11 +1,13 @@
 import { useMemo, useState } from "react";
+import { supabase } from "@/integrations/supabase/client";
 
 type GuideResult = {
-  goal: string;
-  problem: string;
-  plan: [string, string, string];
+  stage: "Validation" | "Product Market Fit" | "Growth";
+  metric: string;
+  bottleneck: string;
   action: string;
-  successCheck: string;
+  whyThisMovesMetric: string;
+  successCondition: string;
 };
 
 function toWords(text: string): string[] {
@@ -20,29 +22,60 @@ function buildLocalFallback(input: string): GuideResult {
   const words = toWords(input);
   const hasMetrics = /\d/.test(input);
   const mentionsTraffic = words.includes("visit") || words.includes("visits") || words.includes("traffic");
-  const mentionsSignup = words.includes("signup") || words.includes("signups") || words.includes("conversion");
+  const mentionsSignup =
+    words.includes("signup") || words.includes("signups") || words.includes("conversion") || words.includes("activation");
   const mentionsRevenue =
     words.includes("paying") || words.includes("paid") || words.includes("revenue") || words.includes("price");
+  const mentionsUpload =
+    words.includes("upload") ||
+    words.includes("uploads") ||
+    words.includes("clipper") ||
+    words.includes("clips") ||
+    words.includes("freeze") ||
+    words.includes("stuck");
 
-  const goal = hasMetrics
-    ? "Increase conversion to paying users from current funnel."
-    : "Define one measurable growth target for the next 7 days.";
+  if (mentionsUpload) {
+    return {
+      stage: "Product Market Fit",
+      metric: "activation_rate = clips_generated / uploads_started",
+      bottleneck: "Users fail to complete upload or abandon during processing",
+      action: "Fix upload reliability and ensure progress never freezes or feels broken",
+      whyThisMovesMetric:
+        "Users must complete the core action before experiencing value; removing friction increases completion rate",
+      successCondition:
+        "activation_rate increases because more uploads successfully produce 3 clips without drop-off",
+    };
+  }
 
-  let problem = "Main blocker is unclear funnel priority between acquisition, activation, and conversion.";
-  if (mentionsTraffic && !mentionsSignup) problem = "Main blocker is weak activation after visits land on the product.";
-  if (mentionsSignup && !mentionsRevenue) problem = "Main blocker is signup-to-paid conversion and unclear upgrade trigger.";
-  if (mentionsRevenue) problem = "Main blocker is paid conversion friction after initial interest.";
+  if (!hasMetrics || (!mentionsTraffic && !mentionsSignup && !mentionsRevenue)) {
+    return {
+      stage: "Validation",
+      metric: "problem_interview_pass_rate = positive_problem_confirmations / interviews_run",
+      bottleneck: "Problem clarity is weak, so demand confidence is low",
+      action: "Run 10 customer interviews using one problem statement and capture yes/no urgency",
+      whyThisMovesMetric: "Validation improves when a single problem statement is tested repeatedly against real users",
+      successCondition: "problem_interview_pass_rate reaches at least 0.6 over the next 10 interviews",
+    };
+  }
+
+  if (mentionsRevenue) {
+    return {
+      stage: "Growth",
+      metric: "weekly_paid_conversion = paying_users / active_trials",
+      bottleneck: "Upgrade intent exists but conversion to paid is leaking at decision moment",
+      action: "Add one in-product upgrade prompt tied to the most-used value moment",
+      whyThisMovesMetric: "Prompting at peak value timing increases paid conversion without adding new acquisition spend",
+      successCondition: "weekly_paid_conversion improves versus the prior 7-day baseline",
+    };
+  }
 
   return {
-    goal,
-    problem,
-    plan: [
-      "Measure each funnel step (visit -> signup -> paid) for the last 7 days.",
-      "Identify the largest percentage drop and review that step's UX and offer clarity.",
-      "Run one focused change on that step and compare next 7-day conversion.",
-    ],
-    action: "Add one clear paid CTA and value proof directly on the first post-signup screen.",
-    successCheck: "Signup-to-paid conversion rate increases within 7 days versus the previous 7-day baseline.",
+    stage: "Product Market Fit",
+    metric: "activation_rate = activated_users / signups",
+    bottleneck: "Users sign up but do not reach first value quickly enough",
+    action: "Reduce time-to-first-value by removing one blocking step before core outcome",
+    whyThisMovesMetric: "Faster first value increases activation and enables progression toward repeat usage",
+    successCondition: "activation_rate increases week-over-week with stable signup volume",
   };
 }
 
@@ -53,6 +86,29 @@ export default function AiCeoGuide() {
   const [error, setError] = useState("");
 
   const canAnalyze = useMemo(() => inputText.trim().length > 0 && !loading, [inputText, loading]);
+
+  const resolveProjectId = async (): Promise<string> => {
+    const stored = localStorage.getItem("alize_projectId") || "default";
+    const pid = String(stored).trim() || "default";
+    const sb = supabase as unknown as {
+      from: (table: string) => {
+        select: (cols: string) => {
+          eq: (col: string, val: string) => {
+            limit: (n: number) => Promise<{ data: Array<Record<string, unknown>> | null; error: { message?: string } | null }>;
+          };
+          order: (col: string, opts: { ascending: boolean }) => {
+            limit: (n: number) => Promise<{ data: Array<Record<string, unknown>> | null; error: { message?: string } | null }>;
+          };
+        };
+      };
+    };
+    const existsRes = await sb.from("projects").select("id").eq("id", pid).limit(1);
+    const exists = Boolean(existsRes.data && existsRes.data.length > 0);
+    if (exists) return pid;
+    const fallbackRes = await sb.from("projects").select("id").order("created_at", { ascending: false }).limit(1);
+    const fallback = fallbackRes.data?.[0]?.id;
+    return typeof fallback === "string" && fallback.trim() ? fallback.trim() : pid;
+  };
 
   const onAnalyze = async () => {
     const trimmed = inputText.trim();
@@ -66,9 +122,66 @@ export default function AiCeoGuide() {
     setLoading(true);
 
     try {
-      // TODO(ai): Replace local fallback with real AI call.
-      // Keep output hard-locked to GOAL / PROBLEM / PLAN / ACTION / SUCCESS CHECK.
+      const projectId = await resolveProjectId();
+      const sb = supabase as unknown as {
+        from: (table: string) => {
+          select: (cols: string) => {
+            eq: (col: string, val: string) => {
+              order: (col: string, opts: { ascending: boolean }) => {
+                limit: (n: number) => Promise<{ data: Array<Record<string, unknown>> | null; error: { message?: string } | null }>;
+              };
+            };
+          };
+          insert: (row: Record<string, unknown>) => Promise<{ error: { message?: string } | null }>;
+        };
+      };
+
+      const latestSpecRes = await sb
+        .from("project_specs")
+        .select("version")
+        .eq("project_id", projectId)
+        .order("version", { ascending: false })
+        .limit(1);
+      const latestSpecVersion = Number(latestSpecRes.data?.[0]?.version ?? 0) || 0;
+      const nextSpecVersion = latestSpecVersion + 1;
+      const structuredSpec = {
+        source: "ai_ceo_guide",
+        input_text: trimmed,
+      };
+      const specInsert = await sb.from("project_specs").insert({
+        project_id: projectId,
+        spec: trimmed,
+        structured_spec: structuredSpec,
+        version: nextSpecVersion,
+        status: "active",
+      });
+      if (specInsert.error) {
+        throw new Error(specInsert.error.message || "Could not save project spec");
+      }
+
+      // TODO(ai): Replace local Growth Ruler generation with real AI call.
+      // Keep output hard-locked to STAGE / METRIC / BOTTLENECK / ACTION / WHY / SUCCESS CONDITION.
       const fallback = buildLocalFallback(trimmed);
+
+      const latestOutputRes = await sb
+        .from("project_outputs")
+        .select("version_number")
+        .eq("project_id", projectId)
+        .order("version_number", { ascending: false })
+        .limit(1);
+      const latestOutputVersion = Number(latestOutputRes.data?.[0]?.version_number ?? 0) || 0;
+      const nextOutputVersion = latestOutputVersion + 1;
+      const outputInsert = await sb.from("project_outputs").insert({
+        project_id: projectId,
+        output_type: "ai_ceo_decision",
+        content: JSON.stringify(fallback),
+        version_number: nextOutputVersion,
+        status: "active",
+      });
+      if (outputInsert.error) {
+        throw new Error(outputInsert.error.message || "Could not save AI CEO output");
+      }
+
       setResult(fallback);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Analysis failed.";
@@ -110,22 +223,23 @@ export default function AiCeoGuide() {
 
         {result ? (
           <section className="mt-6 max-w-2xl rounded-2xl border border-border/60 bg-card p-5 sm:p-6">
-            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">GOAL</p>
-            <p className="mt-1 text-sm">{result.goal}</p>
+            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">STAGE</p>
+            <p className="mt-1 text-sm">{result.stage}</p>
 
-            <p className="mt-4 text-xs font-semibold uppercase tracking-wider text-muted-foreground">PROBLEM</p>
-            <p className="mt-1 text-sm">{result.problem}</p>
+            <p className="mt-4 text-xs font-semibold uppercase tracking-wider text-muted-foreground">METRIC</p>
+            <p className="mt-1 text-sm">{result.metric}</p>
 
-            <p className="mt-4 text-xs font-semibold uppercase tracking-wider text-muted-foreground">PLAN</p>
-            <p className="mt-1 text-sm">1. {result.plan[0]}</p>
-            <p className="mt-1 text-sm">2. {result.plan[1]}</p>
-            <p className="mt-1 text-sm">3. {result.plan[2]}</p>
+            <p className="mt-4 text-xs font-semibold uppercase tracking-wider text-muted-foreground">BOTTLENECK</p>
+            <p className="mt-1 text-sm">{result.bottleneck}</p>
 
-            <p className="mt-4 text-xs font-semibold uppercase tracking-wider text-muted-foreground">ACTION</p>
+            <p className="mt-4 text-xs font-semibold uppercase tracking-wider text-muted-foreground">ACTION (one only)</p>
             <p className="mt-1 text-sm">{result.action}</p>
 
-            <p className="mt-4 text-xs font-semibold uppercase tracking-wider text-muted-foreground">SUCCESS CHECK</p>
-            <p className="mt-1 text-sm">{result.successCheck}</p>
+            <p className="mt-4 text-xs font-semibold uppercase tracking-wider text-muted-foreground">WHY THIS MOVES THE METRIC</p>
+            <p className="mt-1 text-sm">{result.whyThisMovesMetric}</p>
+
+            <p className="mt-4 text-xs font-semibold uppercase tracking-wider text-muted-foreground">SUCCESS CONDITION</p>
+            <p className="mt-1 text-sm">{result.successCondition}</p>
           </section>
         ) : null}
       </main>
