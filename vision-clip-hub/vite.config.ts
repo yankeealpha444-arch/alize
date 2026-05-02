@@ -48,6 +48,7 @@ function resolveHubOrParentAlias(hubSrc: string, parentSrc: string): Plugin {
 
 const hubSrc = path.resolve(__dirname, "src");
 const parentSrc = path.resolve(__dirname, "../src");
+const hubNodeModules = path.resolve(__dirname, "node_modules");
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
@@ -64,6 +65,18 @@ export default defineConfig(({ mode }) => ({
     mode === "development" && componentTagger(),
   ].filter(Boolean),
   resolve: {
+    /** Parent `../src` imports must share the same React + Query + Router instances as the hub bundle. */
+    alias: {
+      react: path.join(hubNodeModules, "react"),
+      "react-dom": path.join(hubNodeModules, "react-dom"),
+      "react/jsx-runtime": path.join(hubNodeModules, "react", "jsx-runtime.js"),
+      "react/jsx-dev-runtime": path.join(hubNodeModules, "react", "jsx-dev-runtime.js"),
+      "@tanstack/react-query": path.join(hubNodeModules, "@tanstack", "react-query"),
+      "@tanstack/query-core": path.join(hubNodeModules, "@tanstack", "query-core"),
+      /** Without this, parent `../src` files (e.g. Sidebar `Link`) can resolve a second copy of RR → null Router context / basename crash. */
+      "react-router": path.join(hubNodeModules, "react-router"),
+      "react-router-dom": path.join(hubNodeModules, "react-router-dom"),
+    },
     dedupe: [
       "react",
       "react-dom",
@@ -71,6 +84,8 @@ export default defineConfig(({ mode }) => ({
       "react/jsx-dev-runtime",
       "@tanstack/react-query",
       "@tanstack/query-core",
+      "react-router",
+      "react-router-dom",
     ],
   },
 }));
